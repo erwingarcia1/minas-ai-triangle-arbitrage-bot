@@ -1,0 +1,67 @@
+# triarb configuration — Phase 1 (observer)
+#
+# Copy to config/config.yaml and adjust. The observer places NO orders;
+# every knob here affects only detection and logging.
+
+# Active venue: bitget | binance | bybit | okx  (Phase 1 ships the bitget
+# adapter; the others raise a clear error until their phase lands).
+venue: bitget
+
+# The currency every triangle must start and end in — the currency you hold.
+quote_currency: USDT
+
+triangles:
+  # true  -> enumerate all viable triangles from the live symbol list,
+  #          filtered by `filters` below, ranked by liquidity, capped.
+  # false -> use only `whitelist`.
+  auto_discovery: true
+
+  # Pinned cycles, used when auto_discovery is false. Direction matters:
+  # "USDT-BTC-ETH" means USDT -> BTC -> ETH -> USDT.
+  whitelist: []
+  # whitelist:
+  #   - USDT-BTC-ETH
+  #   - USDT-ETH-BTC
+
+  # Hard cap on triangles kept in the hot path (ranked by the 24h USDT
+  # volume of their least-liquid leg).
+  max_triangles: 150
+
+filters:
+  # Every leg of a discovered triangle must clear both filters (whitelisted
+  # triangles bypass these — you pinned them deliberately).
+  min_24h_quote_volume_usdt: 2000000
+  max_spread_bps: 15.0
+
+fees:
+  # Taker fee per leg, in basis points. Bitget spot default tier: 10 bps.
+  taker_bps: 10.0
+  maker_bps: 10.0
+  # BGB/BNB-style fee-token discount. Bitget BGB deduction is 20% off
+  # (multiplier 0.8) -> effective taker 8 bps.
+  token_discount_enabled: false
+  token_discount_multiplier: 0.8
+
+observer:
+  # Size the edge is computed for, in quote currency (depth-walked, not
+  # top-of-book). Keep it at what you would actually trade.
+  notional: 100.0
+
+  # Net edge (after fees, before rounding) at or above which a cycle is
+  # logged as "detected". 0 = log every net-positive cycle.
+  edge_threshold_bps: 0.0
+
+  # A leg book older than this marks the evaluation stale; active
+  # opportunities are closed with end_reason=stale.
+  staleness_ms: 300
+
+  # Bitget public depth channel: books1 | books5 | books15. Snapshot
+  # channels only in Phase 1 (no incremental merge / checksum handling).
+  depth_channel: books15
+
+  # Periodic metrics summary interval (seconds).
+  stats_interval_s: 60.0
+
+  # Re-fetch symbol metadata this often (seconds) to catch precision
+  # changes and delistings. 0 disables.
+  metadata_refresh_s: 3600.0
