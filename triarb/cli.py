@@ -66,6 +66,17 @@ async def _observe(args: argparse.Namespace) -> None:
     settings = load_settings(args.config)
     ensure_supported_mode(settings)
 
+    adapter = create_adapter(settings.venue)
+    interval = adapter.min_push_interval_ms(settings.observer.depth_channel)
+    if interval is not None and interval >= settings.observer.staleness_ms:
+        raise ValueError(
+            f"depth_channel {settings.observer.depth_channel!r} pushes at best "
+            f"every {interval:g}ms on {settings.venue.value}, but "
+            f"observer.staleness_ms={settings.observer.staleness_ms} — every "
+            "evaluation would be stale and nothing would ever be priced; use a "
+            "faster channel or raise staleness_ms"
+        )
+
     log_path = args.log_file
     if args.dashboard and log_path is None:
         log_path = "triarb-observer.jsonl"
@@ -75,7 +86,6 @@ async def _observe(args: argparse.Namespace) -> None:
         path=log_path,
     )
 
-    adapter = create_adapter(settings.venue)
     observer = Observer(settings, adapter)
 
     stop = asyncio.Event()

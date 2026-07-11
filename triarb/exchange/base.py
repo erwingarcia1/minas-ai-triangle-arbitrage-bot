@@ -154,6 +154,17 @@ class ExchangeAdapter(abc.ABC):
         ``StreamStatus`` around every gap so consumers can mark books stale.
         """
 
+    def min_push_interval_ms(self, channel: str) -> float | None:
+        """Best-case push cadence of ``channel`` (with ``"auto"`` resolved),
+        or None when unknown/invalid.
+
+        Pushes are event-triggered on every venue, so real gaps are often
+        longer — but a channel whose BEST case is slower than the staleness
+        bound can never produce a usable book, and startup must refuse that
+        configuration loudly instead of silently pricing nothing.
+        """
+        return None
+
     @abc.abstractmethod
     async def aclose(self) -> None:
         """Release network resources. Idempotent."""

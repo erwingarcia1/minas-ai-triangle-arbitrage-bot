@@ -147,11 +147,17 @@ def parse_ws_message(
         return None
     arg = msg.get("arg")
     data = msg.get("data")
-    if not arg or not data or not str(arg.get("channel", "")).startswith("books"):
+    if not arg or not data:
+        return None
+    if not isinstance(arg, dict) or not isinstance(data, list):
+        raise ValueError("unexpected arg/data shape")
+    if not str(arg.get("channel", "")).startswith("books"):
         return None
     inst_id = arg["instId"]
     snapshots: list[BookSnapshot] = []
     for entry in data:
+        if not isinstance(entry, dict):
+            raise ValueError("depth entry is not an object")
         # levels are [price, size, <deprecated>, order_count]
         bids = [(float(lvl[0]), float(lvl[1])) for lvl in entry.get("bids", ())]
         asks = [(float(lvl[0]), float(lvl[1])) for lvl in entry.get("asks", ())]
@@ -253,6 +259,13 @@ class OkxAdapter(ExchangeAdapter):
                 logger.warning("okx ticker entry dropped: %r (%s)", inst_id, exc)
         return tickers
 
+    def min_push_interval_ms(self, channel: str) -> float | None:
+        try:
+            validate_channel(channel)
+        except ValueError:
+            return None
+        return 100.0  # books5: ~100ms when the book changed
+
     async def stream_books(
         self, symbols: Sequence[str], channel: str = "auto"
     ) -> AsyncIterator[BookSnapshot | StreamStatus]:
@@ -280,6 +293,7 @@ class OkxAdapter(ExchangeAdapter):
                             KeyError,
                             ValueError,
                             TypeError,
+                            AttributeError,
                             IndexError,
                         ) as exc:
                             logger.error("okx WS frame unparseable (%s): %.300r", exc, raw)

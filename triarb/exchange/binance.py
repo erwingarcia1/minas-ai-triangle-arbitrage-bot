@@ -170,9 +170,12 @@ def parse_ws_message(
         raise ValueError("frame is not a JSON object")
     if "error" in msg:
         err = msg["error"]
-        return StreamStatus(
-            StreamStatus.ERROR, f"code={err.get('code')} msg={err.get('msg')}", recv_ns
+        detail = (
+            f"code={err.get('code')} msg={err.get('msg')}"
+            if isinstance(err, dict)
+            else repr(err)
         )
+        return StreamStatus(StreamStatus.ERROR, detail, recv_ns)
     if "result" in msg:  # SUBSCRIBE/UNSUBSCRIBE ack: {"result": null, "id": n}
         return None
     stream = msg.get("stream")
@@ -279,6 +282,13 @@ class BinanceAdapter(ExchangeAdapter):
                 logger.warning("binance ticker entry dropped: %r (%s)", info.symbol, exc)
         return tickers
 
+    def min_push_interval_ms(self, channel: str) -> float | None:
+        try:
+            resolved = validate_channel(channel)
+        except ValueError:
+            return None
+        return 100.0 if resolved.endswith("@100ms") else 1000.0
+
     async def stream_books(
         self, symbols: Sequence[str], channel: str = "auto"
     ) -> AsyncIterator[BookSnapshot | StreamStatus]:
@@ -303,7 +313,14 @@ class BinanceAdapter(ExchangeAdapter):
                         recv_wall_ms = int(time.time() * 1000)
                         try:
                             parsed = parse_ws_message(raw, recv_ns, recv_wall_ms)
-                        except (orjson.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+                        except (
+                            orjson.JSONDecodeError,
+                            KeyError,
+                            ValueError,
+                            TypeError,
+                            AttributeError,
+                            IndexError,
+                        ) as exc:
                             logger.error("binance WS frame unparseable (%s): %.300r", exc, raw)
                             continue
                         if parsed is None:

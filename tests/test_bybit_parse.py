@@ -187,6 +187,47 @@ class TestBookAssembly:
         asm = self._assembler()
         assert isinstance(parse_ws_message(delta_frame(5), asm, 1, 1), SequenceGap)
 
+    def test_snapshot_replaces_prior_book_entirely(self) -> None:
+        # Ground truth: ANY type=snapshot resets the book. A merge-instead-
+        # of-replace regression must fail here (QA review finding).
+        asm = self._assembler()
+        parse_ws_message(snapshot_frame(u=100), asm, 1, 1)
+        replacement = orjson.dumps(
+            {
+                "topic": "orderbook.50.BTCUSDT",
+                "type": "snapshot",
+                "ts": 2,
+                "data": {
+                    "s": "BTCUSDT",
+                    "b": [["50000.00", "9.0"]],
+                    "a": [["50001.00", "9.0"]],
+                    "u": 200,
+                    "seq": 2,
+                },
+            }
+        )
+        snap = parse_ws_message(replacement, asm, 2, 2)
+        assert isinstance(snap, BookSnapshot)
+        assert snap.bids == [(50000.0, 9.0)]  # ONLY the new levels
+        assert snap.asks == [(50001.0, 9.0)]
+
+    def test_empty_delta_emits_unchanged_book(self) -> None:
+        asm = self._assembler()
+        first = parse_ws_message(snapshot_frame(u=100), asm, 1, 1)
+        assert isinstance(first, BookSnapshot)
+        snap = parse_ws_message(delta_frame(101), asm, 2, 2)  # b=[], a=[]
+        assert isinstance(snap, BookSnapshot)
+        assert snap.bids == first.bids
+        assert snap.asks == first.asks
+
+    @pytest.mark.parametrize("dup_u", [100, 99])
+    def test_duplicate_or_replayed_u_is_a_gap_not_a_reapply(self, dup_u: int) -> None:
+        # u must equal prev+1 EXACTLY; duplicates/replays must never be
+        # silently re-applied (they signal a desynchronized stream).
+        asm = self._assembler()
+        parse_ws_message(snapshot_frame(u=100), asm, 1, 1)
+        assert isinstance(parse_ws_message(delta_frame(dup_u), asm, 2, 2), SequenceGap)
+
     def test_service_restart_snapshot_resets_sequence(self) -> None:
         asm = self._assembler()
         parse_ws_message(snapshot_frame(u=100), asm, 1, 1)

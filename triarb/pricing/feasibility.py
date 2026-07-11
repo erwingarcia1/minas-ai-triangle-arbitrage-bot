@@ -183,9 +183,11 @@ def simulate_rounded_cycle(
     def min_notional_violated(info: SymbolInfo, quote_amount: Decimal) -> bool:
         """Denomination-aware minimum-notional check for one leg.
 
-        ``quote_amount`` is the leg's actual value in the SYMBOL's quote
-        currency (buy cost / sell proceeds). Exact when the venue minimum
-        is quote-denominated; the haircut settlement proxy covers minimums
+        ``quote_amount`` is the ORDER's notional in the SYMBOL's quote
+        currency — quantity × limit price, the figure the venue actually
+        validates (walked cost/proceeds can clear a minimum the rounded
+        order itself violates). Exact when the venue minimum is
+        quote-denominated; the haircut settlement proxy covers minimums
         denominated in the cycle's settlement currency; anything else is
         unverifiable without conversion rates and is skipped here (executor
         phases must value it before any order exists).
@@ -231,7 +233,7 @@ def simulate_rounded_cycle(
                 if cost is None:
                     return _reject("insufficient_depth")
                 leftover = holding - cost
-            if min_notional_violated(info, cost):
+            if min_notional_violated(info, qty * limit_price):
                 return _reject("min_notional")
             received = qty * keep
             if leftover > 0:
@@ -248,9 +250,9 @@ def simulate_rounded_cycle(
             if fill is None:
                 return _reject("insufficient_depth")
             proceeds, worst = fill
-            if min_notional_violated(info, proceeds):
-                return _reject("min_notional")
             limit_price = _down(worst, info.price_tick_size)
+            if min_notional_violated(info, qty * limit_price):
+                return _reject("min_notional")
             received = proceeds * keep
             dust = holding - qty
             if dust > 0:

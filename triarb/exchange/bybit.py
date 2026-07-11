@@ -39,8 +39,10 @@ Failure modes:
 - WS: any disconnect/timeout yields ``StreamStatus(disconnected)``, the
   internal book assembler is RESET (never carried across connections), and
   the adapter reconnects with exponential backoff and resubscribes.
-- A failed subscription ack (``success: false``) yields
-  ``StreamStatus(error)``; it never kills the stream loop.
+- A failed ack (``success: false`` — subscribe/unsubscribe/ping) yields
+  ``StreamStatus(error)`` and then forces a FULL reconnect: a rejected
+  subscribe would otherwise leave its topic silently dead, and the
+  reconnect path re-subscribes everything and marks books stale meanwhile.
 """
 
 from __future__ import annotations
@@ -58,7 +60,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
 from triarb.exchange.base import BookSnapshot, ExchangeAdapter, StreamStatus, SymbolInfo, Ticker
-from triarb.exchange.errors import RestError
+from triarb.exchange.errors import RestError, WsProtocolError
 
 logger = logging.getLogger(__name__)
 
@@ -403,6 +405,13 @@ class BybitAdapter(ExchangeAdapter):
                 logger.warning("bybit ticker entry dropped: %r (%s)", info.symbol, exc)
         return tickers
 
+    def min_push_interval_ms(self, channel: str) -> float | None:
+        try:
+            resolved = validate_channel(channel)
+        except ValueError:
+            return None
+        return 20.0 if resolved == "orderbook.50" else 100.0
+
     async def stream_books(
         self, symbols: Sequence[str], channel: str = "auto"
     ) -> AsyncIterator[BookSnapshot | StreamStatus]:
@@ -429,7 +438,14 @@ class BybitAdapter(ExchangeAdapter):
                         recv_wall_ms = int(time.time() * 1000)
                         try:
                             parsed = parse_ws_message(raw, assembler, recv_ns, recv_wall_ms)
-                        except (orjson.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+                        except (
+                            orjson.JSONDecodeError,
+                            KeyError,
+                            ValueError,
+                            TypeError,
+                            AttributeError,
+                            IndexError,
+                        ) as exc:
                             logger.error("bybit WS frame unparseable (%s): %.300r", exc, raw)
                             continue
                         if parsed is None:
@@ -457,16 +473,23 @@ class BybitAdapter(ExchangeAdapter):
                             await self._resubscribe(ws, f"{channel}.{parsed.symbol}")
                             continue
                         if isinstance(parsed, StreamStatus):
+                            # Bybit ERROR statuses are failed acks
+                            # (subscribe/unsubscribe/ping). A rejected
+                            # subscribe would otherwise leave its topic
+                            # silently dead (no frames ever again for that
+                            # symbol), so escalate to a full reconnect:
+                            # DISCONNECTED marks every book stale and the
+                            # fresh connection resubscribes everything.
                             logger.error("bybit WS error frame: %s", parsed.detail)
                             yield parsed
-                            continue
+                            raise WsProtocolError(f"ack failure: {parsed.detail}")
                         # Book data flowing = healthy connection; only then
                         # is it safe to reset the reconnect backoff.
                         backoff = _BACKOFF_START_S
                         yield parsed
             except asyncio.CancelledError:
                 raise
-            except (WebSocketException, asyncio.TimeoutError, OSError) as exc:
+            except (WebSocketException, asyncio.TimeoutError, OSError, WsProtocolError) as exc:
                 yield StreamStatus(
                     StreamStatus.DISCONNECTED, repr(exc), time.perf_counter_ns()
                 )

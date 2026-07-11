@@ -117,12 +117,18 @@ def parse_ws_message(
         return None
     arg = msg.get("arg")
     data = msg.get("data")
-    if not arg or not data or not str(arg.get("channel", "")).startswith("books"):
+    if not arg or not data:
+        return None
+    if not isinstance(arg, dict) or not isinstance(data, list):
+        raise ValueError("unexpected arg/data shape")
+    if not str(arg.get("channel", "")).startswith("books"):
         return None
     inst_id = arg["instId"]
     fallback_ts = int(msg.get("ts") or 0)
     snapshots: list[BookSnapshot] = []
     for entry in data:
+        if not isinstance(entry, dict):
+            raise ValueError("depth entry is not an object")
         bids = [(float(p), float(s)) for p, s in entry.get("bids", ())]
         asks = [(float(p), float(s)) for p, s in entry.get("asks", ())]
         snapshots.append(
@@ -216,6 +222,14 @@ class BitgetAdapter(ExchangeAdapter):
                 )
         return tickers
 
+    def min_push_interval_ms(self, channel: str) -> float | None:
+        resolved = "books15" if channel == "auto" else channel
+        if resolved == "books1":
+            return 10.0
+        if resolved in ("books5", "books15"):
+            return 200.0
+        return None
+
     async def stream_books(
         self, symbols: Sequence[str], channel: str = "auto"
     ) -> AsyncIterator[BookSnapshot | StreamStatus]:
@@ -244,7 +258,14 @@ class BitgetAdapter(ExchangeAdapter):
                         recv_wall_ms = int(time.time() * 1000)
                         try:
                             parsed = parse_ws_message(raw, recv_ns, recv_wall_ms)
-                        except (orjson.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+                        except (
+                            orjson.JSONDecodeError,
+                            KeyError,
+                            ValueError,
+                            TypeError,
+                            AttributeError,
+                            IndexError,
+                        ) as exc:
                             logger.error("bitget WS frame unparseable (%s): %.300r", exc, raw)
                             continue
                         if parsed is None:
