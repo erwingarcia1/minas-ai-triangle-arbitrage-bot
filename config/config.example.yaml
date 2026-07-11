@@ -7,6 +7,12 @@
 # adapter; the others raise a clear error until their phase lands).
 venue: bitget
 
+# Operating mode: market_data_only | paper_trading | shadow_trading | live_trading
+# Only market_data_only exists in this build — the others fail at startup
+# with a precise message. live_trading can never be enabled by config alone;
+# it requires the full authorization chain documented in CLAUDE.md §3.
+mode: market_data_only
+
 # The currency every triangle must start and end in — the currency you hold.
 quote_currency: USDT
 
@@ -55,9 +61,16 @@ observer:
   # opportunities are closed with end_reason=stale.
   staleness_ms: 300
 
-  # Bitget public depth channel: books1 | books5 | books15. Snapshot
-  # channels only in Phase 1 (no incremental merge / checksum handling).
-  depth_channel: books15
+  # Public depth channel, venue-native name — or "auto" for the adapter's
+  # default snapshot-style channel:
+  #   bitget:  books1 | books5 | books15            (auto -> books15)
+  #   binance: depth5 | depth10 | depth20,
+  #            optional @100ms/@1000ms suffix       (auto -> depth20@100ms)
+  #   okx:     books5                               (auto -> books5)
+  #   bybit:   orderbook.50 | orderbook.200         (auto -> orderbook.50)
+  # Every venue feeds the observer complete snapshots; Bybit's adapter merges
+  # its snapshot+delta stream internally and emits full books downstream.
+  depth_channel: auto
 
   # Periodic metrics summary interval (seconds).
   stats_interval_s: 60.0

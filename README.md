@@ -1,15 +1,19 @@
-# triarb — single-exchange triangular arbitrage
+# triarb — intra-exchange spot triangular arbitrage
 
-A triangular arbitrage system operating entirely within one spot exchange
-(Bitget by default; Binance, Bybit, OKX behind the same adapter interface),
-built in phases with a hard review gate between each.
+A triangular arbitrage platform operating entirely within one spot exchange
+at a time — Bitget, Binance Global, Bybit, and OKX Global all ship behind
+the same adapter interface; each venue runs as an independent observer
+process. Built in phases with a hard review gate between each; governed by
+the master prompt in `CLAUDE.md` (read that first, then `PROGRESS.md`).
 
-**Current status: Phase 1 — Observer.** This build streams order books,
-enumerates and prices triangles, and logs every detected cycle. **It contains
-no order-placement code of any kind.** Run it for several days before
-deciding whether Phase 2 (paper execution) is worth building: the logs answer
-the only question that matters — *do net-positive cycles exist at your fee
-tier, your size, and your latency?*
+**Current status: Phase 1 — Observer (`mode: market_data_only`).** This
+build streams order books, enumerates and prices triangles, and logs every
+detected cycle. **It contains no order-placement, balance, withdrawal, or
+transfer code of any kind**, and the startup mode gate refuses every mode
+except `market_data_only`. Run it for several days before deciding whether
+Phase 2 (paper execution) is worth building: the logs answer the only
+question that matters — *do net-positive cycles exist at your fee tier,
+your size, and your latency?*
 
 ---
 
@@ -65,9 +69,10 @@ numbers and is unit-tested against this table.
 
 ```
 triarb/
-├── config/        # pydantic Settings + YAML loader (rejects unknown keys)
-├── exchange/      # adapter interface; bitget.py (native WS + REST);
-│                  # binance/bybit/okx placeholders; registry
+├── config/        # pydantic Settings + YAML loader (rejects unknown keys);
+│                  # operating-mode gate (market_data_only only, in this build)
+├── exchange/      # adapter interface; native WS+REST adapters for
+│                  # bitget / binance / bybit / okx; registry
 ├── graph/         # currency graph, triangle enumeration, liquidity filters
 ├── pricing/       # book store, depth walking, fee compounding,
 │                  # float edge screen, exact Decimal rounding feasibility
@@ -75,7 +80,8 @@ triarb/
 ├── observer.py    # Phase 1 orchestrator (hot path lives here)
 └── cli.py         # `triarb observe` — the only command in Phase 1
 config/config.example.yaml
-tests/             # 84 offline tests; no network required
+docs/              # architecture, math, threat model, capability matrix, runbooks
+tests/             # offline test suite; no network required
 ```
 
 Planned for later phases (deliberately absent now): `execution/` (IOC leg
@@ -89,12 +95,16 @@ sequencer + unwind state machine), `risk/` (kill switch, loss limits),
   application-level heartbeats (literal `ping` text frames every ~25 s) and
   `websockets` gives explicit control of ping/pong and close semantics with
   a pure-asyncio API. ccxt is not on the hot path — native protocol only.
-- **Depth channel: `books15` snapshots.** Full-depth `books` is incremental
-  (merge + checksum); snapshot channels eliminate an entire class of
-  book-corruption bugs while we only observe. 15 levels is ample for
-  retail-size notional; walks that exhaust 15 levels are counted as
-  `insufficient_depth`, never extrapolated. The incremental channel is a
-  Phase 4 upgrade if size demands it.
+- **Depth channels: snapshots only, per venue.** Snapshot channels eliminate
+  an entire class of book-corruption bugs while we only observe: Bitget
+  `books15`, Binance partial-depth `depth20@100ms`, OKX `books5` — every
+  push replaces the whole book. Bybit spot has no multi-level snapshot
+  channel, so its adapter consumes `orderbook.50` (snapshot+delta), merges
+  internally with strict `u`-sequence checking, resubscribes on any gap,
+  and emits only complete snapshots downstream. Walks that exhaust visible
+  levels are counted as `insufficient_depth`, never extrapolated. Full
+  incremental books are a Phase 4 upgrade if size demands it (see
+  `docs/DECISIONS.md` D-002).
 - **Two-stage pricing.** Hot path: float depth walk + fee compounding
   (~2.8 µs per triangle re-price on commodity hardware, measured; the
   `reprice_latency_us` histogram tracks it live). Cold path, only for
@@ -119,7 +129,7 @@ Requires Python 3.11+.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                       # 84 tests, all offline
+pytest                       # full suite, all offline
 
 cp config/config.example.yaml config/config.yaml   # edit to taste
 triarb observe --config config/config.yaml
@@ -180,8 +190,10 @@ ships with Phase 4.
 
 ## Phase plan
 
-- [x] **Phase 1 — Observer** (this build): feeds + graph + pricing, cycle
-  lifecycle logging, rounding feasibility, metrics, dashboard. No order code.
+- [x] **Phase 1 — Observer** (this build): feeds + graph + pricing for all
+  four venues (Bitget, Binance, Bybit, OKX — one process per venue), cycle
+  lifecycle logging, rounding feasibility, metrics, dashboard, operating-mode
+  gate. No order code.
 - [ ] **Phase 2 — Paper execution**: leg sequencer with re-validation between
   legs, IOC-only simulated fills with a pessimistic fill model (book moves
   one update against you between legs), unwind state machine, risk module

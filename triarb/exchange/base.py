@@ -32,9 +32,13 @@ from pydantic import BaseModel, ConfigDict, Field
 class SymbolInfo(BaseModel):
     """Normalized spot symbol metadata.
 
-    ``price_precision`` / ``quantity_precision`` are decimal places (step =
-    10^-precision). ``min_notional`` is denominated in USDT on Bitget
-    (``minTradeUSDT``); other venues may differ — adapters normalize.
+    ``price_tick_size`` / ``quantity_step_size`` are the venue's exact
+    increments as Decimals (master prompt §9). Venues that publish decimal
+    places (Bitget) convert with ``Decimal(1).scaleb(-precision)``; venues
+    that publish tick/step strings (Binance, Bybit, OKX) parse them directly
+    — increments are NOT assumed to be powers of ten. ``min_notional`` is
+    denominated in the quote currency unless the venue documents otherwise
+    (Bitget's ``minTradeUSDT`` is USDT); adapters normalize.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -42,8 +46,8 @@ class SymbolInfo(BaseModel):
     symbol: str
     base: str
     quote: str
-    price_precision: int = Field(ge=0, le=18)
-    quantity_precision: int = Field(ge=0, le=18)
+    price_tick_size: Decimal = Field(gt=0)
+    quantity_step_size: Decimal = Field(gt=0)
     min_base_amount: Decimal = Decimal("0")
     min_notional: Decimal = Decimal("0")
     status: str = "online"

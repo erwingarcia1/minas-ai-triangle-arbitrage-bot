@@ -75,7 +75,7 @@ def _parse_whitelist_entry(entry: str, quote: str) -> tuple[str, str, str]:
         raise ValueError(
             f"whitelist entry {entry!r} must start at the configured quote currency {quote}"
         )
-    return parts  # type: ignore[return-value]
+    return parts
 
 
 def build_triangles(

@@ -4,12 +4,15 @@ This is the cold-path Decimal confirmation run only on triangles whose float
 screen cleared the edge threshold. It simulates the three IOC limit orders
 the executor (Phase 2) would actually place:
 
-- BUY leg: limit price = worst walked ask rounded UP to price precision
+- BUY leg: limit price = worst walked ask rounded UP to the price tick
   (stays marketable); quantity = spendable amount / limit price rounded DOWN
   to the quantity step. Fee charged in the received base currency.
 - SELL leg: quantity = holdings rounded DOWN to the quantity step; limit
-  price = worst walked bid rounded DOWN (stays marketable). Fee charged in
-  the received quote currency.
+  price = worst walked bid rounded DOWN to the price tick (stays
+  marketable). Fee charged in the received quote currency.
+
+Rounding is step-based (exact multiples of the venue's tick/step Decimals),
+not decimal-places-based, so non-power-of-ten increments round correctly.
 
 Rounding down strands dust in intermediate currencies. Stranded non-quote
 dust is valued at ZERO in the net-edge-after-rounding figure (pessimistic)
@@ -56,16 +59,18 @@ class FeasibilityReport:
     legs: list[LegPlan] = field(default_factory=list)
 
 
-def _step(decimals: int) -> Decimal:
-    return Decimal(1).scaleb(-decimals)
+def _down(value: Decimal, step: Decimal) -> Decimal:
+    """Largest multiple of ``step`` not exceeding ``value``.
+
+    Step-based (not decimal-places) because venue increments are not always
+    powers of ten — e.g. a 0.5 price tick. Deterministic: floor division.
+    """
+    return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
 
 
-def _down(value: Decimal, decimals: int) -> Decimal:
-    return value.quantize(_step(decimals), rounding=ROUND_DOWN)
-
-
-def _up(value: Decimal, decimals: int) -> Decimal:
-    return value.quantize(_step(decimals), rounding=ROUND_UP)
+def _up(value: Decimal, step: Decimal) -> Decimal:
+    """Smallest multiple of ``step`` not below ``value``."""
+    return (value / step).to_integral_value(rounding=ROUND_UP) * step
 
 
 def _walk_buy_worst(
@@ -159,8 +164,8 @@ def simulate_rounded_cycle(
             worst = _walk_buy_worst(book.asks, holding)
             if worst is None:
                 return _reject("insufficient_depth")
-            limit_price = _up(worst, info.price_precision)
-            qty = _down(holding / limit_price, info.quantity_precision)
+            limit_price = _up(worst, info.price_tick_size)
+            qty = _down(holding / limit_price, info.quantity_step_size)
             if qty <= 0:
                 return _reject("qty_rounds_to_zero")
             if qty < info.min_base_amount:
@@ -174,7 +179,7 @@ def simulate_rounded_cycle(
             if leftover < 0:
                 # limit-price rounding can make qty*limit exceed holdings by a
                 # hair; shave one step off the quantity and re-cost.
-                qty -= _step(info.quantity_precision)
+                qty -= info.quantity_step_size
                 if qty <= 0 or qty < info.min_base_amount:
                     return _reject("qty_rounds_to_zero")
                 cost = _walk_buy_cost(book.asks, qty)
@@ -187,7 +192,7 @@ def simulate_rounded_cycle(
             legs.append(LegPlan(leg.symbol, "buy", limit_price, qty, received))
             holding = received
         else:
-            qty = _down(holding, info.quantity_precision)
+            qty = _down(holding, info.quantity_step_size)
             if qty <= 0:
                 return _reject("qty_rounds_to_zero")
             if qty < info.min_base_amount:
@@ -198,7 +203,7 @@ def simulate_rounded_cycle(
             if fill is None:
                 return _reject("insufficient_depth")
             proceeds, worst = fill
-            limit_price = _down(worst, info.price_precision)
+            limit_price = _down(worst, info.price_tick_size)
             received = proceeds * keep
             dust = holding - qty
             if dust > 0:

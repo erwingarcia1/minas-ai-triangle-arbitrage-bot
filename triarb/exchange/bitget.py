@@ -71,8 +71,8 @@ def parse_symbol(entry: dict[str, Any]) -> SymbolInfo | None:
         symbol=entry["symbol"],
         base=entry["baseCoin"].upper(),
         quote=entry["quoteCoin"].upper(),
-        price_precision=int(entry["pricePrecision"]),
-        quantity_precision=int(entry["quantityPrecision"]),
+        price_tick_size=Decimal(1).scaleb(-int(entry["pricePrecision"])),
+        quantity_step_size=Decimal(1).scaleb(-int(entry["quantityPrecision"])),
         min_base_amount=Decimal(entry.get("minTradeAmount") or "0"),
         min_notional=Decimal(entry.get("minTradeUSDT") or "0"),
         status="online",
@@ -214,11 +214,14 @@ class BitgetAdapter(ExchangeAdapter):
         return tickers
 
     async def stream_books(
-        self, symbols: Sequence[str], channel: str = "books15"
+        self, symbols: Sequence[str], channel: str = "auto"
     ) -> AsyncIterator[BookSnapshot | StreamStatus]:
+        if channel == "auto":
+            channel = "books15"
         if channel not in ("books1", "books5", "books15"):
             raise ValueError(
-                f"channel {channel!r} unsupported in Phase 1 (snapshot channels only)"
+                f"bitget channel {channel!r} unsupported in this phase "
+                "(snapshot channels only: books1/books5/books15 or 'auto')"
             )
         backoff = _BACKOFF_START_S
         while True:

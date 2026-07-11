@@ -25,13 +25,25 @@ def mk_symbol(
     min_base_amount: str = "0",
     min_notional: str = "1",
     status: str = "online",
+    price_tick_size: str | None = None,
+    quantity_step_size: str | None = None,
 ) -> SymbolInfo:
+    """Build a SymbolInfo; precisions are decimal places unless explicit
+    tick/step strings are given (for non-power-of-ten increment tests)."""
     return SymbolInfo(
         symbol=symbol,
         base=base,
         quote=quote,
-        price_precision=price_precision,
-        quantity_precision=quantity_precision,
+        price_tick_size=(
+            Decimal(price_tick_size)
+            if price_tick_size is not None
+            else Decimal(1).scaleb(-price_precision)
+        ),
+        quantity_step_size=(
+            Decimal(quantity_step_size)
+            if quantity_step_size is not None
+            else Decimal(1).scaleb(-quantity_precision)
+        ),
         min_base_amount=Decimal(min_base_amount),
         min_notional=Decimal(min_notional),
         status=status,

@@ -19,7 +19,7 @@ import logging
 import signal
 import sys
 
-from triarb.config import load_settings
+from triarb.config import ensure_supported_mode, load_settings
 from triarb.exchange import create_adapter
 from triarb.monitoring.dashboard import Dashboard
 from triarb.monitoring.jsonlog import log_event, setup_logging
@@ -61,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def _observe(args: argparse.Namespace) -> None:
     settings = load_settings(args.config)
+    ensure_supported_mode(settings)
 
     log_path = args.log_file
     if args.dashboard and log_path is None:

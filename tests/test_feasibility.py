@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from triarb.pricing.feasibility import simulate_rounded_cycle
+from triarb.pricing.feasibility import _down, _up, simulate_rounded_cycle
 
 from tests.conftest import mk_store, mk_symbol, mk_triangle, profitable_books
 
@@ -123,6 +123,53 @@ class TestExchangeMinimums:
         )
         assert not report.ok
         assert report.reject_reason == "missing_metadata"
+
+
+class TestStepRounding:
+    """Venue increments are not always powers of ten (§9): rounding must be
+    exact multiples of the published tick/step, never decimal truncation."""
+
+    def test_down_to_half_step(self) -> None:
+        assert _down(Decimal("10.3"), Decimal("0.5")) == Decimal("10.0")
+        assert _down(Decimal("10.5"), Decimal("0.5")) == Decimal("10.5")
+
+    def test_up_to_half_step(self) -> None:
+        assert _up(Decimal("10.3"), Decimal("0.5")) == Decimal("10.5")
+        assert _up(Decimal("10.5"), Decimal("0.5")) == Decimal("10.5")
+
+    def test_exact_multiple_is_unchanged_no_float_artifacts(self) -> None:
+        assert _down(Decimal("0.3"), Decimal("0.1")) == Decimal("0.3")
+        assert _up(Decimal("0.3"), Decimal("0.1")) == Decimal("0.3")
+
+    def test_full_cycle_with_quarter_qty_step_and_half_price_tick(self) -> None:
+        # Zero fee; every symbol has qty step 0.25 and price tick 0.5.
+        # Leg 1: 100 / 3.0 = 33.33… -> 33.25 units (0.25 USDT unspent);
+        # Leg 2: 1:1 -> 33.25 exactly; Leg 3: 33.25 * 3.1 = 103.075, plus the
+        # recovered 0.25 USDT = 103.325.
+        books = {
+            "BTCUSDT": ([(2.9, 1000.0)], [(3.0, 1000.0)]),
+            "ETHBTC": ([(0.9, 1000.0)], [(1.0, 1000.0)]),
+            "ETHUSDT": ([(3.1, 1000.0)], [(3.2, 1000.0)]),
+        }
+        meta = {
+            sym: mk_symbol(
+                sym, b, q, price_tick_size="0.5", quantity_step_size="0.25"
+            )
+            for sym, b, q in (
+                ("BTCUSDT", "BTC", "USDT"),
+                ("ETHBTC", "ETH", "BTC"),
+                ("ETHUSDT", "ETH", "USDT"),
+            )
+        }
+        report = simulate_rounded_cycle(
+            mk_triangle(), mk_store(books), meta, NOTIONAL, Decimal(0), "USDT"
+        )
+        assert report.ok
+        assert report.legs[0].quantity == Decimal("33.25")
+        # Sell limit rounds DOWN to the 0.5 tick to stay marketable.
+        assert report.legs[2].limit_price == Decimal("3.0")
+        assert report.final_quote == Decimal("103.325")
+        assert "USDT" not in report.stranded
 
 
 class TestQuoteDustRecovery:

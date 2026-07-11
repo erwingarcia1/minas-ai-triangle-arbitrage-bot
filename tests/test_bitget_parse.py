@@ -63,7 +63,8 @@ class TestRestParsing:
         assert info is not None
         assert info.symbol == "BTCUSDT"
         assert (info.base, info.quote) == ("BTC", "USDT")
-        assert (info.price_precision, info.quantity_precision) == (2, 6)
+        assert info.price_tick_size == Decimal("0.01")
+        assert info.quantity_step_size == Decimal("0.000001")
         assert info.min_base_amount == Decimal("0.0001")
         assert info.min_notional == Decimal("1")
 

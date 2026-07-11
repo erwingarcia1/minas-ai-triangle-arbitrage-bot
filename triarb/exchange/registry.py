@@ -1,28 +1,28 @@
 """Venue registry — the single place a new adapter is wired in.
 
-Failure modes: a venue whose adapter has not shipped yet raises
-``VenueNotImplementedError`` at startup with the phase it is scheduled for,
-instead of failing deep inside the run loop.
+All four venues now ship a public market-data adapter behind the same
+``ExchangeAdapter`` contract; each venue runs as an independent observer
+process (see docs/DECISIONS.md D-004). Trading-side adapter methods do not
+exist in any of them — this build is MARKET_DATA_ONLY.
 """
 
 from __future__ import annotations
 
 from triarb.config.models import Venue
 from triarb.exchange.base import ExchangeAdapter
+from triarb.exchange.binance import BinanceAdapter
 from triarb.exchange.bitget import BitgetAdapter
-from triarb.exchange.errors import VenueNotImplementedError
-
-_PLANNED = {
-    Venue.BINANCE: "Phase 2+",
-    Venue.BYBIT: "Phase 2+",
-    Venue.OKX: "Phase 2+",
-}
+from triarb.exchange.bybit import BybitAdapter
+from triarb.exchange.okx import OkxAdapter
 
 
 def create_adapter(venue: Venue) -> ExchangeAdapter:
     if venue is Venue.BITGET:
         return BitgetAdapter()
-    raise VenueNotImplementedError(
-        f"venue '{venue.value}' is configured but its adapter ships in "
-        f"{_PLANNED[venue]}; Phase 1 implements bitget only"
-    )
+    if venue is Venue.BINANCE:
+        return BinanceAdapter()
+    if venue is Venue.BYBIT:
+        return BybitAdapter()
+    if venue is Venue.OKX:
+        return OkxAdapter()
+    raise AssertionError(f"unhandled venue {venue!r}")  # pragma: no cover
