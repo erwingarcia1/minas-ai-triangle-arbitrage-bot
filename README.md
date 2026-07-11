@@ -146,7 +146,7 @@ phases, keys come exclusively from a gitignored `.env` (see `.env.example`):
 - [ ] Withdrawals **disabled** (this repo contains no withdrawal/transfer code, ever)
 - [ ] Transfers **disabled**
 - [ ] IP whitelist pinned to the bot host
-- [ ] Live mode (Phase 3+) requires **both** `--live` and `CONFIRM_LIVE=yes` — paper is the default forever
+- [ ] A non-live mode remains the default forever (`mode: market_data_only` today); live mode (Phase 3+) will additionally require `--live`, `CONFIRM_LIVE=yes`, **and** the full CLAUDE.md §3 authorization chain
 
 ## Reading the output
 
@@ -193,7 +193,8 @@ ships with Phase 4.
 - [x] **Phase 1 — Observer** (this build): feeds + graph + pricing for all
   four venues (Bitget, Binance, Bybit, OKX — one process per venue), cycle
   lifecycle logging, rounding feasibility, metrics, dashboard, operating-mode
-  gate. No order code.
+  gate. No order code. (Binance/Bybit/OKX are offline-verified; per-venue
+  live soak pending — see `PROGRESS.md`.)
 - [ ] **Phase 2 — Paper execution**: leg sequencer with re-validation between
   legs, IOC-only simulated fills with a pessimistic fill model (book moves
   one update against you between legs), unwind state machine, risk module

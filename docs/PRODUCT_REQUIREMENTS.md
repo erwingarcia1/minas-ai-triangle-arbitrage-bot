@@ -13,12 +13,12 @@ that are partially met are split so each sub-claim carries its own label.
 **Current build reality.** This build is a `MARKET_DATA_ONLY` observer. It
 contains **no order-placement, balance, withdrawal, or transfer code of any
 kind** (`triarb/exchange/base.py` defines only `fetch_symbols`,
-`fetch_tickers`, `stream_books`, `aclose`). Only the Bitget public
-market-data adapter is functional (`triarb/exchange/bitget.py`); the
-Binance, Bybit, and OKX modules are placeholders whose constructors raise
-`VenueNotImplementedError` (`triarb/exchange/binance.py`,
-`triarb/exchange/bybit.py`, `triarb/exchange/okx.py`,
-`triarb/exchange/registry.py`). Nothing here is profitable or
+`fetch_tickers`, `stream_books`, `aclose`). All four venues ship a public
+market-data adapter behind that contract (`triarb/exchange/bitget.py`,
+`binance.py`, `bybit.py`, `okx.py`, wired in
+`triarb/exchange/registry.py`); Bitget has run live, while the other three
+are offline-fixture-verified with a live soak pending (`PROGRESS.md`
+iteration 2). Nothing here is profitable or
 production-ready, and the README's economics (compounded fee hurdle,
 latency reality, rounding losses, adverse selection) apply in full.
 
@@ -26,8 +26,8 @@ latency reality, rounding losses, adverse selection) apply in full.
 
 | ID | Requirement | Acceptance criterion | Status |
 |----|-------------|----------------------|--------|
-| R-01 | Connects securely to supported exchanges (Bitget, Bybit, OKX Global, Binance Global) as independent venues | Each venue has an adapter behind the common interface; official endpoints only; authenticated connections pass permission validation before use | Partial. **Implemented:** Bitget public market data over official endpoints, no credentials read anywhere (`triarb/exchange/bitget.py`, `triarb/exchange/registry.py`). **Planned:** Binance/Bybit/OKX adapters (placeholders raise `VenueNotImplementedError`); all private/authenticated connectivity (Part B §8, §29) |
-| R-02 | Downloads all active spot instruments | Startup fetches every online spot symbol with precision and minimum-size metadata; metadata refreshes on a timer | Partial. **Implemented** for Bitget: `fetch_symbols` → validated `SymbolInfo` (`triarb/exchange/base.py`, `triarb/exchange/bitget.py`), periodic refresh via `_metadata_loop` (`triarb/observer.py`). **Planned:** remaining venues (Part B §8, §9) |
+| R-01 | Connects securely to supported exchanges (Bitget, Bybit, OKX Global, Binance Global) as independent venues | Each venue has an adapter behind the common interface; official endpoints only; authenticated connections pass permission validation before use | Partial. **Implemented:** public market data for all four venues over official endpoints, no credentials read anywhere (`triarb/exchange/bitget.py`, `binance.py`, `bybit.py`, `okx.py`, `registry.py`; contract suite `tests/test_adapter_contract.py`); Binance/Bybit/OKX live soak pending (`PROGRESS.md`). **Planned:** all private/authenticated connectivity (Part B §8, §29) |
+| R-02 | Downloads all active spot instruments | Startup fetches every online spot symbol with precision and minimum-size metadata; metadata refreshes on a timer | **Implemented** for all four venues: `fetch_symbols` → validated `SymbolInfo` with exact tick/step increments (`triarb/exchange/base.py` and the four adapters), periodic refresh via `_metadata_loop` (`triarb/observer.py`). **Planned:** refresh-on-error / pre-live refresh triggers (Part B §9) |
 | R-03 | Builds a directed currency-conversion graph | Every spot market yields buy and sell conversion directions; graph rebuilds from live instrument data | Partial. **Implemented:** adjacency of currencies over online markets (`triarb/graph/builder.py`); leg direction (BUY consumes asks, SELL consumes bids) assigned at compilation (`triarb/graph/triangles.py`, `triarb/pricing/edge.py`). **Planned:** the full per-edge record of Part B §10 (fee model, status, sequence number per edge) |
 | R-04 | Discovers every valid three-leg currency cycle | All directed cycles through the configured settlement currency are enumerated, both directions kept as distinct opportunities, deduplicated, filterable | Partial. **Implemented:** `enumerate_cycles` finds every directed Q→A→B→Q cycle for configured quote currency Q, both directions distinct, with liquidity/spread filters and whitelist (`triarb/graph/triangles.py`, tests in `tests/test_triangles.py`). **Planned/TBD:** cycles not anchored at the single configured settlement asset — see TBD-1 |
 | R-05 | Maintains real-time local order books | Books track update time and staleness; invalid or stale books are never used for opportunities | Partial. **Implemented:** snapshot-channel `BookStore`, staleness from local monotonic receive time, all books invalidated on WebSocket disconnect (`triarb/pricing/orderbook.py`, `triarb/observer.py`, tests in `tests/test_orderbook.py`). **Planned:** incremental books with sequence numbers, checksums, and snapshot resynchronization (Part B §13) |
@@ -50,9 +50,9 @@ them is a defect regardless of test results.
 
 | ID | Constraint | Compliance today |
 |----|-----------|------------------|
-| CR-01 | Original implementation from official exchange documentation, publicly documented market mechanics, independently designed algorithms, and internally created tests | **Implemented as process.** Adapters speak the documented public protocols natively (`triarb/exchange/bitget.py`); no third-party bot code is vendored; all 84+ tests are offline and internally authored (`tests/`) |
+| CR-01 | Original implementation from official exchange documentation, publicly documented market mechanics, independently designed algorithms, and internally created tests | **Implemented as process.** Adapters speak the documented public protocols natively (`triarb/exchange/`); no third-party bot code is vendored; the entire suite (175 tests) is offline and internally authored (`tests/`) |
 | CR-02 | Do not copy another arbitrage bot or decompile proprietary software | **Implemented as process** (no such code present) |
-| CR-03 | Do not circumvent exchange or geographic restrictions | **Implemented:** only official public endpoints are called (`triarb/exchange/bitget.py`); no proxy/geo logic exists anywhere |
+| CR-03 | Do not circumvent exchange or geographic restrictions | **Implemented:** only official public endpoints are called (`triarb/exchange/`); no proxy/geo logic exists anywhere |
 | CR-04 | Do not scrape private endpoints or use undocumented authentication | **Implemented:** no authentication code exists; no API keys are read in this phase (`.env.example` documents keys as later-phase only) |
 | CR-05 | Do not misrepresent performance or claim guaranteed returns | **Implemented as documentation stance:** README states the fee hurdle, latency, and adverse-selection realities and frames the observer as the tool to disprove viability; theoretical edges are never labeled realized |
 | CR-06 | Never enable withdrawals; withdrawal/transfer code is banned permanently | **Implemented:** no withdrawal or transfer code exists; the adapter interface has no such methods (`triarb/exchange/base.py`); `.env.example` pins `WITHDRAWAL_PERMISSION_ALLOWED=false`, `AUTOMATIC_EXTERNAL_TRANSFERS=false`. **Planned:** automated rejection of withdrawal-enabled keys (Invariant 16) when key handling ships (Part B §29) |

@@ -73,8 +73,8 @@ path (no pydantic, minimal allocation).
 | Field | Normalization rule |
 |---|---|
 | `symbol` | Venue-native symbol string, used as the key everywhere in-process. |
-| `base`, `quote` | Uppercased asset codes (`parse_symbol` in `triarb/exchange/bitget.py`). |
-| `price_precision`, `quantity_precision` | **Decimal places** (step = 10^−precision), 0–18 enforced. Venues that publish step sizes instead must convert. |
+| `base`, `quote` | Uppercased asset codes (`parse_symbol` in each venue adapter). |
+| `price_tick_size`, `quantity_step_size` | **Exact venue increments as Decimals** (> 0), NOT assumed to be powers of ten (§9). Step-publishing venues (Binance/Bybit/OKX) parse the strings directly; precision-publishing venues (Bitget) convert via `Decimal(1).scaleb(-precision)`. |
 | `min_base_amount` | `Decimal`, minimum order quantity in base units; `0` = unknown/none. |
 | `min_notional` | `Decimal`; on Bitget this is `minTradeUSDT` (USDT-denominated). Other venues may denominate differently — **the adapter normalizes; the consumer must not guess**. |
 | `status` | Only `"online"` symbols are emitted by `fetch_symbols` today; non-online entries are filtered in the adapter. |
@@ -137,14 +137,14 @@ OKX) must follow all of them:
 9. **Public endpoints only in this phase.** No API keys are read anywhere;
    an adapter that needs credentials does not belong in this build.
 
-Venue status (**Implemented**): Bitget is the only working adapter
-(`triarb/exchange/bitget.py`). `BinanceAdapter`, `BybitAdapter`,
-`OkxAdapter` are placeholders whose constructors raise
-`VenueNotImplementedError` (`triarb/exchange/binance.py`, `bybit.py`,
-`okx.py`); the registry names their scheduled phase. Per-venue channel
-strategy is decided (D-002: Binance `<symbol>@depth20@100ms`, OKX `books5`,
-Bybit `orderbook.50` merged internally) but **the code is not written** —
-see `docs/EXCHANGE_CAPABILITY_MATRIX.md` for verified capability claims.
+Venue status (**Implemented**): all four venues ship market-data adapters
+behind this contract (`triarb/exchange/bitget.py`, `binance.py`,
+`bybit.py`, `okx.py`, wired in `registry.py`), following the D-002
+per-venue channel strategy (Binance `<symbol>@depth20@100ms`, OKX
+`books5`, Bybit `orderbook.50` merged internally by `BybitBookAssembler`).
+Binance/Bybit/OKX are offline-fixture-verified with a live soak pending
+(`PROGRESS.md`) — see `docs/EXCHANGE_CAPABILITY_MATRIX.md` for the
+verified capability claims each adapter is built on.
 
 ## 4. The §8 target contract (Planned surface)
 
@@ -182,11 +182,14 @@ qualification.
 | `normalizeError()` | **Partial** | Typed hierarchy with venue context exists (`triarb/exchange/errors.py`); the per-venue error-code matrix is **Planned** (Phase 4, README phase plan). |
 | `reconcileOrder()` / `reconcileBalances()` / `reconcileCompleteAccountState()` | **Planned** (Phase 3) | Reconciliation and Recovery stage (§7, §21). |
 
-Contract-test requirement (**Planned**, §32): every adapter must pass one
-shared contract suite before its venue is enabled. Today's offline
-equivalents cover the Bitget parsers and stream behavior
-(`tests/test_bitget_parse.py`, `tests/test_registry.py`); the reusable
-cross-venue suite lands with the second real adapter.
+Contract-test requirement (**Partial**, §32): every adapter must pass one
+shared contract suite before its venue is enabled.
+`tests/test_adapter_contract.py` runs the market-data-scope contract over
+all four adapters today (construction without credentials, name/venue
+match, channel validation before any connection, idempotent close), and
+each venue has a parse suite from documented payload shapes
+(`tests/test_*_parse.py`). The trading-scope contract suite lands with the
+§8 trading surface.
 
 ## 5. TBDs (per CLAUDE.md §6)
 

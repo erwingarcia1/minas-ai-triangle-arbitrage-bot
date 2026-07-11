@@ -26,8 +26,9 @@ construction:
 - Reconnects need no resynchronization protocol: the first snapshot after
   resubscribe is complete by definition.
 
-The trade-off: visible depth is capped at the channel's level count (15
-levels on Bitget `books15` today). Depth walks that exhaust visible levels
+The trade-off: visible depth is capped at the channel's level count
+(5–50 levels by venue: OKX `books5`, Bitget `books15`, Binance `depth20`,
+Bybit `orderbook.50`). Depth walks that exhaust visible levels
 are rejected as `insufficient_depth` and never extrapolated
 (`triarb/pricing/edge.py`, `triarb/pricing/feasibility.py`) — conservative
 by construction. Full incremental handling is the Planned upgrade (§6–§7).
@@ -141,8 +142,8 @@ tracked item:
 | §13 item | Status | Notes |
 |---|---|---|
 | Initial snapshot | **Implemented** | Trivially: every message is a full snapshot (`BookStore.apply`) |
-| Incremental updates | **Planned** (§13) | No delta handling exists; first consumer is the Bybit adapter design (§7) |
-| Sequence numbers | **Planned** (§13) | No sequence tracking exists today; snapshot channels do not need it |
+| Incremental updates | **Implemented** inside the Bybit adapter only (`BybitBookAssembler` emits complete snapshots downstream) | Engine-level incremental handling for other venues remains **Planned** (§13) |
+| Sequence numbers | **Implemented** for Bybit (`u`-continuity in `BybitBookAssembler`; gap → resync) | Snapshot channels on the other venues do not need sequence tracking; engine-level tracking **Planned** (§13) |
 | Update timestamps | **Implemented** | `ts_exchange_ms`, `recv_ns`, `recv_wall_ms` on every snapshot |
 | Bid levels / Ask levels | **Implemented** | Verbatim venue levels, capped at channel depth |
 | Checksum where available | **Planned** (§13) | Required when incremental channels land on venues that publish checksums |
@@ -190,9 +191,9 @@ with adversarial re-verification per D-005.
 | Venue | Observer channel | Status | Notes |
 |---|---|---|---|
 | Bitget | `books15` (also accepts `books1`/`books5`; `"auto"` → `books15`) | **Implemented** — `triarb/exchange/bitget.py` | Snapshot channels push the full book on change. The incremental `books` channel (merge + checksum) is explicitly rejected with a `ValueError` in this phase. Later upgrade to `books`: **Planned** (§13; D-002 revisit criteria) |
-| Binance | Partial book depth streams `<symbol>@depth20@100ms` | **Planned** — `triarb/exchange/binance.py` is a placeholder that raises `VenueNotImplementedError` | Each push is a full top-N snapshot, so it slots into today's engine unchanged. Later upgrade: diff-depth stream + REST snapshot with `U`/`u` update-ID sequencing (Binance publishes no checksum) — **Planned** (§13) |
-| OKX | `books5` | **Planned** — `triarb/exchange/okx.py` is a placeholder that raises `VenueNotImplementedError` | `books5` pushes a full 5-level snapshot on every update. Later upgrade: `books` (400 levels, snapshot + updates with `seqId` and checksum) — **Planned** (§13) |
-| Bybit | `orderbook.50` | **Planned** — `triarb/exchange/bybit.py` is a placeholder that raises `VenueNotImplementedError` | Bybit spot has **no multi-level snapshot-only channel**: `orderbook.N` sends one snapshot then deltas. The designed adapter (D-002) assembles deltas *internally* with `u`-sequence gap detection, resubscribes on any gap, and emits only complete snapshots downstream — the only §13 sequence handling in the system stays contained in one adapter module |
+| Binance | Partial book depth streams `<symbol>@depth20@100ms` | **Implemented** — `triarb/exchange/binance.py` (offline-fixture-verified; live soak pending) | Each push is a full top-N snapshot, so it slots into today's engine unchanged. Later upgrade: diff-depth stream + REST snapshot with `U`/`u` update-ID sequencing (Binance publishes no checksum) — **Planned** (§13) |
+| OKX | `books5` | **Implemented** — `triarb/exchange/okx.py` (offline-fixture-verified; live soak pending) | `books5` pushes a full 5-level snapshot on every update. Later upgrade: `books` (400 levels, snapshot + updates with `seqId` and checksum) — **Planned** (§13) |
+| Bybit | `orderbook.50` | **Implemented** — `triarb/exchange/bybit.py` (offline-fixture-verified; live soak pending) | Bybit spot has **no multi-level snapshot-only channel**: `orderbook.N` sends one snapshot then deltas. `BybitBookAssembler` merges deltas *internally* with strict `u`-sequence gap detection (gap → empty book emitted + topic resubscribe; tested in `tests/test_bybit_parse.py::TestBookAssembly`), so the only §13 sequence handling in the system stays contained in one adapter module and only complete snapshots flow downstream |
 
 Configuration: `observer.depth_channel` (default `"auto"`,
 `triarb/config/models.py`) selects the venue-native channel; adapters

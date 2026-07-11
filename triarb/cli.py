@@ -1,13 +1,16 @@
 """CLI entry point.
 
-Phase 1 exposes exactly one command: ``observe``. There is no ``--live`` flag
-because there is no execution path to enable — the observer cannot place
-orders. When execution ships (Phase 2+), live trading will require BOTH a
-``--live`` flag AND ``CONFIRM_LIVE=yes`` in the environment; paper remains
-the default forever.
+Phase 1 exposes exactly one command: ``observe``. There is no ``--live``
+flag because there is no execution path to enable — the observer cannot
+place orders, and ``ensure_supported_mode`` refuses every mode except
+``market_data_only``. A non-live mode remains the default forever; when
+execution ships (Phase 2+), live trading will additionally require a
+``--live`` flag, ``CONFIRM_LIVE=yes`` in the environment, AND the full
+CLAUDE.md §3 authorization chain.
 
-Failure modes: config/venue errors abort before any network connection;
-SIGINT/SIGTERM trigger a clean shutdown with a final stats snapshot.
+Failure modes: config/venue/mode errors abort before any network
+connection; SIGINT/SIGTERM trigger a clean shutdown with a final stats
+snapshot.
 """
 
 from __future__ import annotations

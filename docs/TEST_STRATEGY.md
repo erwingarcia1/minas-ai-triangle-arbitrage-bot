@@ -11,7 +11,7 @@
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest            # 159 tests, all offline, <1 s
+.venv/bin/pytest            # 175 tests, all offline, <1 s
 .venv/bin/ruff check .      # lint
 .venv/bin/mypy triarb       # strict mode (pyproject.toml)
 ```
@@ -41,7 +41,7 @@ Live-venue behavior is validated separately by a manual, bounded soak run
 (`triarb observe`) — see `PROGRESS.md` "Next best action". Soak runs are an
 operational check, not part of the test suite.
 
-## 3. Suite inventory (Implemented — 13 files, 159 tests)
+## 3. Suite inventory (Implemented — 14 files, 175 tests)
 
 | File | Tests | What it proves |
 |---|---:|---|
@@ -57,6 +57,7 @@ operational check, not part of the test suite.
 | `tests/test_bitget_parse.py` | 10 | Bitget adapter (`triarb/exchange/bitget.py`): symbol/ticker parsing from recorded v2 payloads, `books15` snapshot frames, pong/ack ignored, error frames become `StreamStatus`, malformed frames raise for the caller to log. |
 | `tests/test_binance_parse.py` | 22 | Binance adapter (`triarb/exchange/binance.py`): filter-based symbol parsing (incl. legacy `MIN_NOTIONAL` name; symbols missing rounding filters are **dropped**, never guessed), quote-volume→USDT conversion, depth-stream frames, channel validation. |
 | `tests/test_bybit_parse.py` | 24 | Bybit adapter (`triarb/exchange/bybit.py`): symbol/ticker parsing plus `BybitBookAssembler` snapshot+delta assembly — upserts, zero-size deletes, **sequence-gap detection drops the book** until a fresh snapshot, delta-before-snapshot is a gap, service-restart snapshot resets, reconnect `reset()` forgets all books, depth-limit capping. |
+| `tests/test_adapter_contract.py` | 16 | Cross-venue contract suite (§32): every `Venue` adapter constructs without credentials or network, `name` matches the venue, junk depth channels are rejected **before** any connection attempt, `aclose` is idempotent. |
 | `tests/test_okx_parse.py` | 18 | OKX adapter (`triarb/exchange/okx.py`): v5 symbol/ticker parsing, 4-element `books5` levels, non-power-of-ten tick preserved, control frames, channel validation. |
 | `tests/test_observer.py` | 4 | Offline end-to-end of the MARKET_DATA_ONLY pipeline (`triarb/observer.py`): detect → persist → end lifecycle, threshold gating, **disconnect ends opportunities and stales all books**, `rounding_killed` counter when the float edge is positive but the Decimal simulation is infeasible. |
 

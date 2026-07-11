@@ -16,7 +16,7 @@ This table is the authoritative map of which stages exist today.
 
 | §7 stage | Status | Where |
 |---|---|---|
-| Exchange Public WebSockets | **Implemented** (Bitget only) | `triarb/exchange/bitget.py` (`stream_books`); Binance/Bybit/OKX are placeholders that raise `VenueNotImplementedError` (`triarb/exchange/binance.py`, `bybit.py`, `okx.py`, `registry.py`) |
+| Exchange Public WebSockets | **Implemented** (all four venues) | `stream_books` in `triarb/exchange/bitget.py`, `binance.py`, `bybit.py`, `okx.py`; wired in `registry.py`. Binance/Bybit/OKX are offline-fixture-verified, live soak pending (`PROGRESS.md`) |
 | Normalized Market Events | **Implemented** | `BookSnapshot` + `StreamStatus` in `triarb/exchange/base.py`; venue frames are parsed in the adapter, never downstream |
 | Local Order-Book Engine | **Implemented** (snapshot-replace variant) | `triarb/pricing/orderbook.py` (`Book`, `BookStore`). Full §13 sequence/checksum incremental handling is **Planned** (`CLAUDE.md` §13; `docs/ORDER_BOOK_ENGINE.md`, decision D-002) |
 | Currency Graph | **Implemented** | `triarb/graph/builder.py` (`build_adjacency`: currencies are nodes, each spot market is both directed edges) |
@@ -75,9 +75,9 @@ graph TD
     cli["triarb/cli.py<br/>(triarb observe)"] --> config["triarb/config<br/>loader.py + models.py<br/>(Mode gate: ensure_supported_mode)"]
     cli --> registry["triarb/exchange/registry.py"]
     cli --> observer["triarb/observer.py<br/>(orchestrator, hot path)"]
-    registry --> bitget["triarb/exchange/bitget.py"]
-    bitget --> base["triarb/exchange/base.py<br/>ExchangeAdapter · SymbolInfo · Ticker<br/>BookSnapshot · StreamStatus"]
-    bitget --> errors["triarb/exchange/errors.py"]
+    registry --> adapters["triarb/exchange/{bitget,binance,bybit,okx}.py<br/>(one native adapter per venue)"]
+    adapters --> base["triarb/exchange/base.py<br/>ExchangeAdapter · SymbolInfo · Ticker<br/>BookSnapshot · StreamStatus"]
+    adapters --> errors["triarb/exchange/errors.py"]
     observer --> base
     observer --> triangles["triarb/graph/triangles.py"]
     observer --> edge["triarb/pricing/edge.py<br/>(float screen; Triangle/Leg/Side)"]
@@ -149,7 +149,7 @@ reported as actionable carries an exact-`Decimal` re-simulation.
 Per book update (**Implemented**, `triarb/observer.py`):
 
 ```text
-WS frame (venue task)                          triarb/exchange/bitget.py
+WS frame (venue task)                          triarb/exchange/<venue>.py
   → parse to BookSnapshot | StreamStatus         parse_ws_message()
   → Observer._consume dispatches
       StreamStatus  → mark ALL books stale on DISCONNECTED,

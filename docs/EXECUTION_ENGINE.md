@@ -115,8 +115,10 @@ per §9). The Phase 2 planner reuses this logic; it does not reimplement it.
 FOK may be used only when (§17): it is officially supported for the symbol
 and exchange, exchange behavior is verified, the fill requirement is
 appropriate, and failure does not create additional exposure. Per-venue
-IOC/FOK support is a "Verify" item in `docs/EXCHANGE_CAPABILITY_MATRIX.md`
-— never assumed from another exchange (§8).
+IOC/FOK support is documented in `docs/EXCHANGE_CAPABILITY_MATRIX.md`
+(doc-verified for all four venues on 2026-07-11; runtime behavior still
+needs the automated capability test that lands with the trading surface) —
+never assumed from another exchange (§8).
 
 **Never assume an accepted order acknowledgement means the order is filled**
 (§17, Invariant 11). Fill state comes only from private execution events,
@@ -287,6 +289,6 @@ non-quote dust at zero (pessimistic) — **Implemented** as simulation only.
 | TBD | Safest reversible assumption (per CLAUDE.md §6) |
 |---|---|
 | State-machine persistence backend | Append-only local JSON-lines journal behind config; PostgreSQL (§5) as the upgrade path |
-| Per-venue client order ID length/charset limits | 32-char `[A-Za-z0-9-]` cap behind per-venue config, pending `docs/EXCHANGE_CAPABILITY_MATRIX.md` verification |
+| Per-venue client order ID length/charset limits | Doc-verified limits recorded in `docs/EXCHANGE_CAPABILITY_MATRIX.md` (OKX ≤32 alnum is the strictest); a 32-char `[A-Za-z0-9]` cap satisfies every venue and stays behind per-venue config until runtime-verified |
 | Per-venue FOK support and semantics | FOK unused anywhere until verified per §17/§8; IOC-only default |
 | `WAITING_LEG_N` timeout values | Conservative configurable timeout; on expiry treat state as **unknown** and run the §19 reconciliation protocol, never assume failure |
