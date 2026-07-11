@@ -19,7 +19,8 @@ behind the existing `ExchangeAdapter` contract so all four venues run the
 safest vertical slice; (3) the `docs/` tree, capability matrix, and feature
 traceability matrix; (4) `CLAUDE.md` + this file.
 
-**Work completed:**
+**Work completed** (commits `ab3a419`, `ce43294`, `51b411f`, + review
+follow-ups):
 - Baseline verified: 84 offline tests green, ruff clean; fixed 2 mypy nits
   (missing `types-PyYAML` dev dep; unused `type: ignore` in
   `triarb/graph/triangles.py`).
@@ -32,20 +33,64 @@ traceability matrix; (4) `CLAUDE.md` + this file.
 - `.env.example`: `LIVE_TRADING_ENABLED=false`,
   `WITHDRAWAL_PERMISSION_ALLOWED=false`,
   `AUTOMATIC_EXTERNAL_TRANSFERS=false` defaults documented.
+- §9 normalization: `SymbolInfo` migrated from decimal-place precisions to
+  exact `price_tick_size`/`quantity_step_size` Decimals; feasibility
+  rounding is step-based (correct for non-power-of-ten increments), with
+  unit tests (`tests/test_feasibility.py::TestStepRounding`).
 - Official-doc research: 4 documentation agents + 4 adversarial verifiers
-  over Bitget/Bybit/OKX/Binance spot docs → `docs/EXCHANGE_CAPABILITY_MATRIX.md`.
-- (This entry is finalized at commit time with adapter + docs results.)
+  over Bitget/Bybit/OKX/Binance spot docs; all four venues CONFIRMED
+  (Binance/Bybit high confidence via official docs source repos;
+  Bitget/OKX medium — doc sites block datacenter fetchers, claims
+  corroborated via official-page phrase extraction + venue SDKs). Distilled
+  into `docs/EXCHANGE_CAPABILITY_MATRIX.md`.
+- Adapters: Binance (combined-stream `depth20@100ms` partial-depth
+  snapshots; strict `isSpotTradingAllowed`; client protocol pings disabled
+  to protect the 5 msg/s inbound budget), OKX (`books5` snapshots,
+  4-element levels, text ping), Bybit (`orderbook.50` snapshot+delta merged
+  by `BybitBookAssembler` with strict `u`-continuity; gap → empty book +
+  topic resubscribe; assembler reset on reconnect; spot instruments
+  unpaginated per docs). Registry wires all four venues;
+  `depth_channel: auto` resolves per venue. Quote-denominated 24h volumes
+  are converted to USDT via same-batch `<CCY>USDT` prices for discovery
+  filtering (unknown quote → volume 0, conservatively excluded).
+- Tests: 84 → 175 offline (venue parse suites from documented payload
+  shapes, Bybit assembly/sequencing suite, cross-venue adapter contract
+  suite `tests/test_adapter_contract.py`, mode gate, step rounding).
+  ruff + mypy strict clean throughout.
+- Docs: `CLAUDE.md` (master prompt + operating guide), this file, and the
+  full 20-file `docs/` tree; an independent cross-doc consistency reviewer
+  reported findings F1–F11 (stale placeholder claims, a stale SymbolInfo
+  schema row, stale counts, "paper is the default forever" wording) — all
+  applied in `51b411f`.
 
-**Assumptions:** recorded in `docs/DECISIONS.md` (stack preservation,
-snapshot-channel strategy per venue, mode gate placement).
+**Tests run:** `pytest` (175 passed, all offline), `ruff check .`,
+`mypy triarb` (strict) — green at every commit.
 
-**Risks remaining:** venue payloads verified against official docs and
-offline fixtures only — a live soak run per venue (`triarb observe`) is the
-next validation step; no execution/risk/recovery code exists yet by design.
+**Review findings:** docs consistency review F1–F11 → fixed (`51b411f`).
+Independent 5-lens code review (quant / market-data / security /
+adversarial / QA with adversarial verification of P0/P1 findings) —
+results recorded below when the fleet completes.
 
-**Next best action:** live soak of each new adapter in MARKET_DATA_ONLY
-mode; then Phase 2 specification (paper execution: leg sequencer,
-pessimistic fill model, risk kill switch, accounting) per
+**Assumptions:** recorded in `docs/DECISIONS.md` D-001…D-005 and the TBD
+registers in `docs/FEATURE_MATRIX.md` / per-doc TBD tables.
+
+**Risks remaining:**
+- Venue payloads verified against official docs and offline fixtures only.
+  A per-venue live soak (`triarb observe --duration 3600`) is REQUIRED
+  before trusting the three new adapters operationally. Attempted from
+  this sandbox on 2026-07-11: blocked — the environment's egress policy
+  returns CONNECT 403 for all four exchange hosts. The soak must run from
+  an operator environment with open egress.
+- Bitget/OKX capability rows carry medium confidence (doc sites block
+  robots); re-verify on first live contact per D-005.
+- No execution/risk/recovery/accounting code exists yet — by design.
+
+**Blockers:** live soak blocked by sandbox egress policy (above); nothing
+else.
+
+**Next best action:** operator-run live soak per venue in
+MARKET_DATA_ONLY mode; then Phase 2 specification (paper execution: leg
+sequencer, pessimistic fill model, risk kill switch, accounting) per
 `docs/PAPER_TRADING.md`.
 
 ---

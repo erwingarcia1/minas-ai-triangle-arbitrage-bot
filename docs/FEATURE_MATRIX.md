@@ -164,11 +164,11 @@ No accounting/ledger code exists in this build.
 
 | Feature ID | Requirement | Description | Status | Evidence | Phase |
 |---|---|---|---|---|---|
-| F-TEST-OFFLINE | §32 | Offline unit suite, no network: 147 test functions across config, graph, depth, edge, fees, feasibility, order books, observer lifecycle, per-venue payload parsing | Implemented | `tests/` (`pytest`, all offline per `tests/conftest.py`) | 1 |
+| F-TEST-OFFLINE | §32 | Offline test suite, no network: 180 tests across config, graph, depth, edge, fees, feasibility, order books, observer lifecycle, per-venue payload parsing, adapter contract, and pricing-core properties | Implemented | `tests/` (`pytest`, all offline per `tests/conftest.py`) | 1 |
 | F-TEST-GATES | §35 | Commit gates: `pytest` + `ruff check .` + `mypy triarb` (strict) all clean | Implemented | `pyproject.toml` (`[tool.mypy] strict = true`); CLAUDE.md Part A "How to work in this repo" | 1 |
 | F-TEST-CONTRACT | §32 | Adapter contract suite — market-data scope today (all venues construct without credentials/network, names match registry); full §8 contract suite grows with trading methods | Implemented (subset) | `tests/test_adapter_contract.py`; `tests/test_registry.py` | 1 / 2 |
-| F-TEST-FIXTURES | §8 | Per-venue payload fixture tests derived from official docs (symbols, tickers, WS frames, control frames, malformed frames) | Implemented (Bitget) / In progress (Binance/Bybit/OKX, this iteration) | `tests/test_bitget_parse.py`, `tests/test_binance_parse.py`, `tests/test_bybit_parse.py`, `tests/test_okx_parse.py` | 1 |
-| F-TEST-PROPERTY | §32 | Property-based tests (fees monotone, rounding never creates funds, ledger balance, …). One example-based analogue exists (`tests/test_feasibility.py::TestHappyPath::test_rounding_always_costs_edge`) | Planned | §32 | 2 |
+| F-TEST-FIXTURES | §8 | Per-venue payload fixture tests derived from official docs (symbols, tickers, WS frames, control frames, malformed frames; Bybit adds snapshot+delta assembly/sequencing) | Implemented (all four venues) | `tests/test_bitget_parse.py`, `tests/test_binance_parse.py`, `tests/test_bybit_parse.py`, `tests/test_okx_parse.py` | 1 |
+| F-TEST-PROPERTY | §32 | Property-based tests for the pricing core: depth-walk output bounds, fee monotonicity, exact tick/step increment compliance (Invariant 6), rounding-cannot-create-funds. Ledger/reservation/dedup properties follow with their Phase 2 code | Implemented (pricing core) | `tests/test_properties.py` (Hypothesis, deterministic via `derandomize`) | 1 / 2 |
 | F-TEST-INTEGRATION | §32 | Live/network integration tests; next action is a live soak of each adapter in MARKET_DATA_ONLY | Planned | `PROGRESS.md` iteration 2 "Next best action" | 1–2 |
 | F-TEST-REPLAY | §26 | Deterministic market-replay framework | Planned | §26 | 2 |
 | F-TEST-CHAOS | §32 | Chaos injection (disconnects, timeouts, duplicate/out-of-order fills, crashes, clock drift, …) | Planned | §32 | 4 |

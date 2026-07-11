@@ -11,7 +11,7 @@
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest            # 175 tests, all offline, <1 s
+.venv/bin/pytest            # 180 tests, all offline, <3 s
 .venv/bin/ruff check .      # lint
 .venv/bin/mypy triarb       # strict mode (pyproject.toml)
 ```
@@ -41,7 +41,7 @@ Live-venue behavior is validated separately by a manual, bounded soak run
 (`triarb observe`) — see `PROGRESS.md` "Next best action". Soak runs are an
 operational check, not part of the test suite.
 
-## 3. Suite inventory (Implemented — 14 files, 175 tests)
+## 3. Suite inventory (Implemented — 15 files, 180 tests)
 
 | File | Tests | What it proves |
 |---|---:|---|
@@ -59,6 +59,7 @@ operational check, not part of the test suite.
 | `tests/test_bybit_parse.py` | 24 | Bybit adapter (`triarb/exchange/bybit.py`): symbol/ticker parsing plus `BybitBookAssembler` snapshot+delta assembly — upserts, zero-size deletes, **sequence-gap detection drops the book** until a fresh snapshot, delta-before-snapshot is a gap, service-restart snapshot resets, reconnect `reset()` forgets all books, depth-limit capping. |
 | `tests/test_adapter_contract.py` | 16 | Cross-venue contract suite (§32): every `Venue` adapter constructs without credentials or network, `name` matches the venue, junk depth channels are rejected **before** any connection attempt, `aclose` is idempotent. |
 | `tests/test_okx_parse.py` | 18 | OKX adapter (`triarb/exchange/okx.py`): v5 symbol/ticker parsing, 4-element `books5` levels, non-power-of-ten tick preserved, control frames, channel validation. |
+| `tests/test_properties.py` | 5 | Property-based invariants (§32, Hypothesis, deterministic): depth-walk output bounds, fee monotonicity, exact tick/step increment compliance for arbitrary increments, rounding-cannot-create-funds on an identity cycle. |
 | `tests/test_observer.py` | 4 | Offline end-to-end of the MARKET_DATA_ONLY pipeline (`triarb/observer.py`): detect → persist → end lifecycle, threshold gating, **disconnect ends opportunities and stales all books**, `rounding_killed` counter when the float edge is positive but the Decimal simulation is infeasible. |
 
 ## 4. §31 invariant map
@@ -100,7 +101,7 @@ execution-side test is still Planned for the phase that introduces the code.
 | §32 category | Today | Planned |
 |---|---|---|
 | **Unit** | Implemented: directed-edge calculations, sell/buy conversions, fee deduction, Decimal precision, price/quantity rounding, minimum notionals, route generation/deduplication, depth simulation, profitability screening (files in §3 above). | Optimal sizing (§14), risk rules, state transitions, balance reservations — with their Phase 2 code. |
-| **Property-based** | Not present. Example-based analogues exist (`test_rounding_always_costs_edge`, `insufficient_depth` never extrapolates) but they are single points, not properties. | Phase 2: the §32 property list (output never exceeds depth, higher fees never raise profit, rounding cannot create funds, reservations cannot be overspent, duplicate events cannot duplicate orders, ledger stays balanced). **TBD-TS-2**: framework undecided; safest reversible assumption is Hypothesis (additive dev dependency, removable). |
+| **Property-based** | Implemented for the pricing core (`tests/test_properties.py`, Hypothesis with `derandomize=True` for reproducible CI): P1 walks never return more than visible depth; P2 higher fees never raise net edge (and never change gross); P3 every planned order quantity/price is an exact multiple of the venue step/tick for arbitrary increments incl. non-power-of-ten (Invariant 6); P4 rounding cannot create funds (identity cycle at zero fee never settles above its start). | Phase 2 additions with their code: reservations cannot be overspent, duplicate events cannot duplicate orders, ledger stays balanced. |
 | **Adapter contract** | Partially: each of the four adapters has its own offline parse suite built on fixture payloads from official docs, and `tests/test_registry.py` runs one parametrized check over **all** venues. | §32 requires **one shared contract suite that every adapter must pass** — a single parametrized suite asserting identical semantics (symbol normalization, drop-don't-guess on malformed entries, `StreamStatus` on errors, channel validation) across all four adapters, so a fifth venue inherits every obligation automatically. **TBD-TS-3**: suite shape undecided; safest reversible assumption is a parametrized module over `(adapter, fixture_dir)` pairs, which subsumes today's per-venue files without deleting them. |
 | **Integration** | None by design (no-network rule; no private endpoints, no database). Live public-WS behavior is covered by manual soak runs only. | Phase 2+: private WebSockets, REST authentication, order placement/cancellation, fill processing, balance sync, persistence, restart recovery — against exchange demo/test environments where supported, never in default CI. |
 | **End-to-end** | Partially: `tests/test_observer.py` drives the complete MARKET_DATA_ONLY pipeline offline (books in → detection → persistence → end, including the disconnect path). | Paper-mode and shadow-mode complete cycles (Phase 2/3); demo-environment cycles where the venue provides one (§8 capability matrix). |
@@ -131,6 +132,6 @@ Replay tests will run offline and therefore fit the no-network rule as-is.
 | ID | Question | Safest reversible assumption on record |
 |---|---|---|
 | TBD-TS-1 | Mechanical enforcement of the no-network rule | Convention + review now; add a socket-blocking autouse fixture when execution code lands. |
-| TBD-TS-2 | Property-based framework | Hypothesis, as an additive dev dependency. |
+| TBD-TS-2 | ~~Property-based framework~~ RESOLVED: Hypothesis adopted (`tests/test_properties.py`; dev dependency in `pyproject.toml`). |  |
 | TBD-TS-3 | Shared adapter contract-suite shape | Parametrized suite over `(adapter, fixture_dir)`; keeps today's per-venue files. |
 | TBD-TS-4 | Replay recording format | JSON-lines of verbatim raw frames + receive timestamps. |
