@@ -3,8 +3,8 @@
 # Copy to config/config.yaml and adjust. The observer places NO orders;
 # every knob here affects only detection and logging.
 
-# Active venue: bitget | binance | bybit | okx  (Phase 1 ships the bitget
-# adapter; the others raise a clear error until their phase lands).
+# Active venue: bitget | binance | bybit | okx  (all four ship a public
+# market-data adapter; one venue per process).
 venue: bitget
 
 # Operating mode: market_data_only | paper_trading | shadow_trading | live_trading
@@ -58,7 +58,7 @@ observer:
   edge_threshold_bps: 0.0
 
   # A leg book older than this marks the evaluation stale; active
-  # opportunities are closed with end_reason=stale.
+  # opportunities are closed with end_reason=stale_book.
   staleness_ms: 300
 
   # Public depth channel, venue-native name — or "auto" for the adapter's
