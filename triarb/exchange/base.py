@@ -36,9 +36,14 @@ class SymbolInfo(BaseModel):
     increments as Decimals (master prompt §9). Venues that publish decimal
     places (Bitget) convert with ``Decimal(1).scaleb(-precision)``; venues
     that publish tick/step strings (Binance, Bybit, OKX) parse them directly
-    — increments are NOT assumed to be powers of ten. ``min_notional`` is
-    denominated in the quote currency unless the venue documents otherwise
-    (Bitget's ``minTradeUSDT`` is USDT); adapters normalize.
+    — increments are NOT assumed to be powers of ten.
+
+    ``min_notional_asset`` names the currency ``min_notional`` is
+    denominated in; the empty string means the symbol's own quote currency
+    (Binance ``NOTIONAL``, Bybit ``minOrderAmt``). Bitget's ``minTradeUSDT``
+    is always USDT regardless of the symbol's quote, so its adapter sets
+    ``"USDT"`` explicitly. Consumers must never compare ``min_notional``
+    against an amount in a different currency.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -50,6 +55,7 @@ class SymbolInfo(BaseModel):
     quantity_step_size: Decimal = Field(gt=0)
     min_base_amount: Decimal = Decimal("0")
     min_notional: Decimal = Decimal("0")
+    min_notional_asset: str = ""
     status: str = "online"
 
 

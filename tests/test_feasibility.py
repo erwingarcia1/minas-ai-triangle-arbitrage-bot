@@ -80,6 +80,8 @@ class TestRoundingKills:
 
 class TestExchangeMinimums:
     def test_min_notional_rejection(self) -> None:
+        # Quote-denominated minimum (Binance/Bybit style, the default):
+        # leg 1 spends ~100 USDT on BTCUSDT, below the 200 USDT minimum.
         meta = _meta(
             BTCUSDT=mk_symbol("BTCUSDT", "BTC", "USDT", min_notional="200")
         )
@@ -89,12 +91,56 @@ class TestExchangeMinimums:
         assert not report.ok
         assert report.reject_reason == "min_notional"
 
-    def test_min_notional_skipped_for_non_usdt_quote(self) -> None:
-        meta = _meta(BTCUSDT=mk_symbol("BTCUSDT", "BTC", "USDT", min_notional="200"))
+    def test_cross_leg_quote_denominated_minimum_enforced(self) -> None:
+        # Regression (quant review): a quote-denominated minimum on the
+        # CROSS leg is denominated in BTC, not USDT. Leg 2 spends only
+        # ~0.002 BTC, far below a 0.01 BTC minimum — the old USDT-proxy
+        # comparison (95 < 0.01 == False) silently passed this.
+        meta = _meta(
+            ETHBTC=mk_symbol("ETHBTC", "ETH", "BTC", min_notional="0.01")
+        )
+        report = simulate_rounded_cycle(
+            mk_triangle(), mk_store(profitable_books()), meta, NOTIONAL, FEE, "USDT"
+        )
+        assert not report.ok
+        assert report.reject_reason == "min_notional"
+
+    def test_settlement_denominated_minimum_uses_haircut_proxy(self) -> None:
+        # Bitget-style minTradeUSDT on a non-USDT-quoted leg of a USDT
+        # cycle: valued via the 5% haircut proxy (100 * 0.95 = 95 USDT).
+        ok_meta = _meta(
+            ETHBTC=mk_symbol(
+                "ETHBTC", "ETH", "BTC", min_notional="90", min_notional_asset="USDT"
+            )
+        )
+        report = simulate_rounded_cycle(
+            mk_triangle(), mk_store(profitable_books()), ok_meta, NOTIONAL, FEE, "USDT"
+        )
+        assert report.ok  # 95 >= 90
+        tight_meta = _meta(
+            ETHBTC=mk_symbol(
+                "ETHBTC", "ETH", "BTC", min_notional="96", min_notional_asset="USDT"
+            )
+        )
+        report = simulate_rounded_cycle(
+            mk_triangle(), mk_store(profitable_books()), tight_meta, NOTIONAL, FEE, "USDT"
+        )
+        assert not report.ok
+        assert report.reject_reason == "min_notional"
+
+    def test_unvaluable_minimum_denomination_is_skipped(self) -> None:
+        # A USDT-denominated minimum on a BTC-quoted leg of an EUR cycle
+        # cannot be valued without conversion rates — the observer skips it
+        # (documented model limit); executor phases must value it.
+        meta = _meta(
+            ETHBTC=mk_symbol(
+                "ETHBTC", "ETH", "BTC", min_notional="1000000", min_notional_asset="USDT"
+            )
+        )
         report = simulate_rounded_cycle(
             mk_triangle(), mk_store(profitable_books()), meta, NOTIONAL, FEE, "EUR"
         )
-        assert report.ok  # proxy check only applies to USDT-quoted cycles
+        assert report.ok
 
     def test_min_qty_rejection(self) -> None:
         meta = _meta(
@@ -140,6 +186,22 @@ class TestStepRounding:
     def test_exact_multiple_is_unchanged_no_float_artifacts(self) -> None:
         assert _down(Decimal("0.3"), Decimal("0.1")) == Decimal("0.3")
         assert _up(Decimal("0.3"), Decimal("0.1")) == Decimal("0.3")
+
+    def test_floor_is_exact_beyond_default_context_precision(self) -> None:
+        # Regression (quant review): naive Decimal division rounds the
+        # quotient to context precision (28 digits) BEFORE flooring, which
+        # rounded 9.999…9/0.25 UP across the integer boundary and returned
+        # a "floor" greater than the input.
+        value = Decimal("9.999999999999999999999999999")  # 28 significant digits
+        assert _down(value, Decimal("0.25")) == Decimal("9.75")
+        assert _up(value, Decimal("0.25")) == Decimal("10.00")
+
+    def test_negative_inputs_floor_and_ceil_correctly(self) -> None:
+        # Latent-domain contract: _down is a true floor and _up a true
+        # ceiling for all signs (ROUND_DOWN/ROUND_UP truncate toward zero
+        # and silently swapped roles for negatives).
+        assert _down(Decimal("-10.3"), Decimal("0.5")) == Decimal("-10.5")
+        assert _up(Decimal("-10.3"), Decimal("0.5")) == Decimal("-10.0")
 
     def test_full_cycle_with_quarter_qty_step_and_half_price_tick(self) -> None:
         # Zero fee; every symbol has qty step 0.25 and price tick 0.5.

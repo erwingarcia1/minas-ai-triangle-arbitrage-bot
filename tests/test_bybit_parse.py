@@ -83,6 +83,7 @@ class TestRestParsing:
         assert info.quantity_step_size == Decimal("0.000001")
         assert info.min_base_amount == Decimal("0.000048")
         assert info.min_notional == Decimal("1")
+        assert info.min_notional_asset == ""  # minOrderAmt is quote-denominated
 
     def test_non_trading_symbol_skipped(self) -> None:
         assert parse_symbol({**SYMBOL_ENTRY, "status": "Closed"}) is None
@@ -140,11 +141,47 @@ class TestBookAssembly:
         assert isinstance(gap, SequenceGap)
         assert gap.symbol == "BTCUSDT"
         assert (gap.expected_u, gap.got_u) == (101, 103)
-        # After the gap the internal book is gone: the next delta is also a gap…
-        assert isinstance(parse_ws_message(delta_frame(104), asm, 3, 3), SequenceGap)
-        # …until a fresh snapshot arrives (resubscribe behavior).
-        snap = parse_ws_message(snapshot_frame(u=200), asm, 4, 4)
+        # In-flight deltas behind the same gap are swallowed (None), not
+        # re-reported — one gap must trigger exactly one resubscribe, not a
+        # storm at the 20ms push cadence.
+        assert parse_ws_message(delta_frame(104), asm, 3, 3) is None
+        assert parse_ws_message(delta_frame(105), asm, 4, 4) is None
+        # A fresh snapshot (the resubscribe response) resynchronizes…
+        snap = parse_ws_message(snapshot_frame(u=200), asm, 5, 5)
         assert isinstance(snap, BookSnapshot)
+        # …and deltas apply again, and a NEW gap is reported again.
+        assert isinstance(parse_ws_message(delta_frame(201), asm, 6, 6), BookSnapshot)
+        assert isinstance(parse_ws_message(delta_frame(299), asm, 7, 7), SequenceGap)
+
+    def test_malformed_delta_is_atomic(self) -> None:
+        # Regression (market-data review): a malformed level must not
+        # half-apply a delta or advance the sequence — the caller logs and
+        # continues, and the NEXT valid delta with the same u still applies
+        # to an uncorrupted book.
+        asm = self._assembler()
+        parse_ws_message(snapshot_frame(u=100), asm, 1, 1)
+        bad = orjson.dumps(
+            {
+                "topic": "orderbook.50.BTCUSDT",
+                "type": "delta",
+                "ts": 1,
+                "data": {
+                    "s": "BTCUSDT",
+                    "b": [["69000.50", "0.5"], ["not-a-price", "x"]],
+                    "a": [],
+                    "u": 101,
+                    "seq": 1,
+                },
+            }
+        )
+        with pytest.raises(ValueError):
+            parse_ws_message(bad, asm, 2, 2)
+        snap = parse_ws_message(
+            delta_frame(101, b=[["69000.50", "0.5"]]), asm, 3, 3
+        )
+        assert isinstance(snap, BookSnapshot)
+        # The malformed frame's valid-looking first level was NOT applied.
+        assert snap.bids == [(69000.50, 0.5), (69000.40, 1.2), (69000.00, 3.0)]
 
     def test_delta_before_snapshot_is_a_gap(self) -> None:
         asm = self._assembler()
@@ -196,6 +233,12 @@ class TestWsControlFrames:
     def test_malformed_frame_raises_for_caller_to_log(self) -> None:
         with pytest.raises(Exception):
             parse_ws_message(b"not json", BybitBookAssembler(50), 1, 1)
+
+    def test_non_object_json_frame_raises_value_error(self) -> None:
+        # Valid JSON whose top level is an array must be a loggable skip,
+        # never an AttributeError that kills the observer TaskGroup.
+        with pytest.raises(ValueError, match="JSON object"):
+            parse_ws_message(b"[1, 2, 3]", BybitBookAssembler(50), 1, 1)
 
 
 class TestChannelValidation:

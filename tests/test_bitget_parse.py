@@ -67,6 +67,7 @@ class TestRestParsing:
         assert info.quantity_step_size == Decimal("0.000001")
         assert info.min_base_amount == Decimal("0.0001")
         assert info.min_notional == Decimal("1")
+        assert info.min_notional_asset == "USDT"  # minTradeUSDT, not quote
 
     def test_offline_symbol_skipped(self) -> None:
         assert parse_symbol({**SYMBOL_ENTRY, "status": "offline"}) is None
@@ -82,6 +83,12 @@ class TestRestParsing:
         ticker = parse_ticker({**TICKER_ENTRY, "bidPr": "", "askPr": None})
         assert ticker.bid == 0.0
         assert ticker.spread_bps == float("inf")
+
+    def test_non_object_json_frame_raises_value_error(self) -> None:
+        # Valid JSON whose top level is an array must be a loggable skip,
+        # never an AttributeError that kills the observer TaskGroup.
+        with pytest.raises(ValueError, match="JSON object"):
+            parse_ws_message(b"[1, 2, 3]", 1, 1)
 
 
 class TestWsParsing:

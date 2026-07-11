@@ -166,6 +166,8 @@ def parse_ws_message(
     and continues; one bad frame must not kill the stream.
     """
     msg = orjson.loads(raw)
+    if not isinstance(msg, dict):
+        raise ValueError("frame is not a JSON object")
     if "error" in msg:
         err = msg["error"]
         return StreamStatus(
@@ -294,7 +296,6 @@ class BinanceAdapter(ExchangeAdapter):
                     yield StreamStatus(
                         StreamStatus.CONNECTED, self._ws_url, time.perf_counter_ns()
                     )
-                    backoff = _BACKOFF_START_S
                     await self._subscribe(ws, streams)
                     while True:
                         raw = await asyncio.wait_for(ws.recv(), timeout=_RECV_TIMEOUT_S)
@@ -309,6 +310,11 @@ class BinanceAdapter(ExchangeAdapter):
                             continue
                         if isinstance(parsed, StreamStatus):
                             logger.error("binance WS error frame: %s", parsed.detail)
+                            yield parsed
+                            continue
+                        # Book data flowing = healthy connection; only then
+                        # is it safe to reset the reconnect backoff.
+                        backoff = _BACKOFF_START_S
                         yield parsed
             except asyncio.CancelledError:
                 raise

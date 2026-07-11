@@ -62,6 +62,7 @@ class TestRestParsing:
         assert info.quantity_step_size == Decimal("0.00001000")
         assert info.min_base_amount == Decimal("0.00001000")
         assert info.min_notional == Decimal("5.00000000")
+        assert info.min_notional_asset == ""  # NOTIONAL is quote-denominated
 
     def test_non_trading_symbol_skipped(self) -> None:
         assert parse_symbol({**SYMBOL_ENTRY, "status": "BREAK"}) is None
@@ -132,6 +133,10 @@ class TestWsParsing:
     def test_malformed_frame_raises_for_caller_to_log(self) -> None:
         with pytest.raises(Exception):
             parse_ws_message(b"not json", 1, 1)
+
+    def test_non_object_json_frame_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="JSON object"):
+            parse_ws_message(b"[1, 2, 3]", 1, 1)
 
 
 class TestChannelValidation:

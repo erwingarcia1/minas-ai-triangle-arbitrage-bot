@@ -23,10 +23,14 @@ def mk_symbol(
     price_precision: int = 2,
     quantity_precision: int = 6,
     min_base_amount: str = "0",
-    min_notional: str = "1",
+    # No minimum by default: min_notional is denominated per symbol quote
+    # (a blanket "1" would mean 1 BTC on cross legs). Tests that exercise
+    # minimums opt in explicitly.
+    min_notional: str = "0",
     status: str = "online",
     price_tick_size: str | None = None,
     quantity_step_size: str | None = None,
+    min_notional_asset: str = "",
 ) -> SymbolInfo:
     """Build a SymbolInfo; precisions are decimal places unless explicit
     tick/step strings are given (for non-power-of-ten increment tests)."""
@@ -46,6 +50,7 @@ def mk_symbol(
         ),
         min_base_amount=Decimal(min_base_amount),
         min_notional=Decimal(min_notional),
+        min_notional_asset=min_notional_asset,
         status=status,
     )
 

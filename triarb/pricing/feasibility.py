@@ -20,10 +20,16 @@ and reported separately; unspent quote from leg 1 never left the account and
 is counted back in.
 
 Failure modes / model limits:
-- ``min_notional`` (Bitget ``minTradeUSDT``) is checked against the starting
-  notional with a 5% haircut as a proxy for each leg's USDT value — exact
-  per-leg USDT valuation needs conversion rates that only the executor will
-  track. The check is skipped when the cycle's quote currency is not USDT.
+- ``min_notional`` is denomination-aware (``SymbolInfo.min_notional_asset``):
+  when the minimum is denominated in the symbol's own quote currency
+  (Binance ``NOTIONAL``, Bybit ``minOrderAmt``), the leg's actual
+  quote-side amount (cost for a buy, proceeds for a sell) is compared
+  exactly. When it is denominated in the cycle's settlement currency
+  (Bitget ``minTradeUSDT`` on a USDT cycle), the starting notional with a
+  5% haircut serves as the proxy for each leg's value. A minimum
+  denominated in a third currency cannot be valued here and is skipped —
+  the executor phases must value it with real conversion rates before any
+  order exists.
 - Books too shallow for the size reject with ``insufficient_depth``; the
   simulation never extrapolates past visible levels.
 """
@@ -31,7 +37,7 @@ Failure modes / model limits:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import ROUND_DOWN, ROUND_UP, Decimal
+from decimal import Decimal, localcontext
 
 from triarb.exchange.base import SymbolInfo
 from triarb.pricing.edge import Side, Triangle
@@ -59,18 +65,41 @@ class FeasibilityReport:
     legs: list[LegPlan] = field(default_factory=list)
 
 
+def _step_quotient_floor(value: Decimal, step: Decimal) -> int:
+    """Exact ``floor(value / step)`` via integer arithmetic.
+
+    ``value / step`` under a Decimal context rounds the quotient to the
+    context precision BEFORE any floor is applied, so a quotient needing
+    more digits than the context (default 28) can round UP across an
+    integer boundary and break the floor guarantee. Rescaling both finite
+    decimals to integers (exponent shift only — no rounding is possible)
+    and using integer floor division is exact for every magnitude and sign.
+    """
+    exp_value = value.as_tuple().exponent
+    exp_step = step.as_tuple().exponent
+    # NaN/Infinity mark the exponent with a letter; venue decimals are
+    # always finite, and anything else must fail loudly here.
+    assert isinstance(exp_value, int) and isinstance(exp_step, int)
+    shift = max(-exp_value, -exp_step, 0)
+    return int(value.scaleb(shift)) // int(step.scaleb(shift))
+
+
 def _down(value: Decimal, step: Decimal) -> Decimal:
-    """Largest multiple of ``step`` not exceeding ``value``.
+    """Largest multiple of ``step`` not exceeding ``value`` (exact floor).
 
     Step-based (not decimal-places) because venue increments are not always
-    powers of ten — e.g. a 0.5 price tick. Deterministic: floor division.
+    powers of ten — e.g. a 0.5 price tick.
     """
-    return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
+    with localcontext() as ctx:
+        ctx.prec = 60  # exact for any realistic venue magnitude
+        return Decimal(_step_quotient_floor(value, step)) * step
 
 
 def _up(value: Decimal, step: Decimal) -> Decimal:
-    """Smallest multiple of ``step`` not below ``value``."""
-    return (value / step).to_integral_value(rounding=ROUND_UP) * step
+    """Smallest multiple of ``step`` not below ``value`` (exact ceiling)."""
+    with localcontext() as ctx:
+        ctx.prec = 60
+        return Decimal(-_step_quotient_floor(-value, step)) * step
 
 
 def _walk_buy_worst(
@@ -149,8 +178,26 @@ def simulate_rounded_cycle(
     holding = notional
     stranded: dict[str, Decimal] = {}
     legs: list[LegPlan] = []
-    check_min_notional = quote_currency == "USDT"
-    usd_proxy = notional * _MIN_NOTIONAL_HAIRCUT
+    settlement_proxy = notional * _MIN_NOTIONAL_HAIRCUT
+
+    def min_notional_violated(info: SymbolInfo, quote_amount: Decimal) -> bool:
+        """Denomination-aware minimum-notional check for one leg.
+
+        ``quote_amount`` is the leg's actual value in the SYMBOL's quote
+        currency (buy cost / sell proceeds). Exact when the venue minimum
+        is quote-denominated; the haircut settlement proxy covers minimums
+        denominated in the cycle's settlement currency; anything else is
+        unverifiable without conversion rates and is skipped here (executor
+        phases must value it before any order exists).
+        """
+        if info.min_notional <= 0:
+            return False
+        denom = info.min_notional_asset or info.quote
+        if denom == info.quote:
+            return quote_amount < info.min_notional
+        if denom == quote_currency:
+            return settlement_proxy < info.min_notional
+        return False
 
     for leg in triangle.legs:
         info = meta.get(leg.symbol)
@@ -170,8 +217,6 @@ def simulate_rounded_cycle(
                 return _reject("qty_rounds_to_zero")
             if qty < info.min_base_amount:
                 return _reject("min_qty")
-            if check_min_notional and info.min_notional > 0 and usd_proxy < info.min_notional:
-                return _reject("min_notional")
             cost = _walk_buy_cost(book.asks, qty)
             if cost is None:
                 return _reject("insufficient_depth")
@@ -186,6 +231,8 @@ def simulate_rounded_cycle(
                 if cost is None:
                     return _reject("insufficient_depth")
                 leftover = holding - cost
+            if min_notional_violated(info, cost):
+                return _reject("min_notional")
             received = qty * keep
             if leftover > 0:
                 stranded[leg.cur_from] = stranded.get(leg.cur_from, Decimal(0)) + leftover
@@ -197,12 +244,12 @@ def simulate_rounded_cycle(
                 return _reject("qty_rounds_to_zero")
             if qty < info.min_base_amount:
                 return _reject("min_qty")
-            if check_min_notional and info.min_notional > 0 and usd_proxy < info.min_notional:
-                return _reject("min_notional")
             fill = _walk_sell(book.bids, qty)
             if fill is None:
                 return _reject("insufficient_depth")
             proceeds, worst = fill
+            if min_notional_violated(info, proceeds):
+                return _reject("min_notional")
             limit_price = _down(worst, info.price_tick_size)
             received = proceeds * keep
             dust = holding - qty

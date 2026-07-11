@@ -168,44 +168,58 @@ class BybitBookAssembler:
 
     Sequencing rules (Bybit v5 orderbook):
     - ``type: snapshot`` (including the ``u == 1`` service-restart form)
-      replaces the whole book and resets the sequence.
+      replaces the whole book, resets the sequence, and clears the symbol's
+      unsynced flag.
     - ``type: delta`` must carry ``u == previous_u + 1``; otherwise messages
-      were missed and the local book is untrustworthy → ``SequenceGap``.
-    - A delta for a symbol with no prior snapshot is also a gap (can happen
-      after a per-topic resubscribe race).
+      were missed and the local book is untrustworthy → ``SequenceGap`` is
+      returned ONCE and the symbol is marked unsynced. Further deltas for
+      an unsynced symbol return ``None`` (they are the expected tail of the
+      same gap while the resubscribe's fresh snapshot is in flight) — this
+      prevents an unsubscribe/subscribe storm at the 20ms push cadence.
     - Delta levels with size 0 delete the price level; others upsert.
+    - Atomicity: every level is parsed and validated BEFORE any state is
+      touched, so a malformed frame raises without half-applying a delta or
+      advancing the sequence — the caller logs it and the next valid delta
+      still applies to an uncorrupted book.
     """
 
     def __init__(self, depth_limit: int) -> None:
         self._depth_limit = depth_limit
         self._books: dict[str, _BookState] = {}
+        self._unsynced: set[str] = set()
 
-    def reset(self, symbol: str | None = None) -> None:
-        """Drop state for one symbol (resubscribe) or all (reconnect)."""
-        if symbol is None:
-            self._books.clear()
-        else:
-            self._books.pop(symbol, None)
+    def reset(self) -> None:
+        """Forget everything (reconnect: all topics resend snapshots)."""
+        self._books.clear()
+        self._unsynced.clear()
 
     def apply(
         self, msg_type: str, data: dict[str, Any], recv_ns: int, recv_wall_ms: int
-    ) -> BookSnapshot | SequenceGap:
+    ) -> BookSnapshot | SequenceGap | None:
         symbol = data["s"]
         u = int(data.get("u") or 0)
+        # Parse ALL levels before touching state (atomicity — see class doc).
+        bid_levels = [(float(p), float(s)) for p, s in data.get("b", ())]
+        ask_levels = [(float(p), float(s)) for p, s in data.get("a", ())]
         if msg_type == "snapshot":
             state = _BookState()
             self._books[symbol] = state
+            self._unsynced.discard(symbol)
         else:
             existing = self._books.get(symbol)
             if existing is None:
+                if symbol in self._unsynced:
+                    return None  # gap already reported; awaiting fresh snapshot
+                self._unsynced.add(symbol)
                 return SequenceGap(symbol, expected_u=0, got_u=u)
             if u != existing.u + 1:
-                self.reset(symbol)
+                self._books.pop(symbol, None)
+                self._unsynced.add(symbol)
                 return SequenceGap(symbol, expected_u=existing.u + 1, got_u=u)
             state = existing
         state.u = u
-        _apply_levels(state.bids, data.get("b", ()))
-        _apply_levels(state.asks, data.get("a", ()))
+        _apply_levels(state.bids, bid_levels)
+        _apply_levels(state.asks, ask_levels)
         bids = sorted(state.bids.items(), key=lambda lvl: -lvl[0])[: self._depth_limit]
         asks = sorted(state.asks.items(), key=lambda lvl: lvl[0])[: self._depth_limit]
         return BookSnapshot(
@@ -218,10 +232,8 @@ class BybitBookAssembler:
         )
 
 
-def _apply_levels(side: dict[float, float], levels: Any) -> None:
-    for price_s, size_s in levels:
-        price = float(price_s)
-        size = float(size_s)
+def _apply_levels(side: dict[float, float], levels: list[tuple[float, float]]) -> None:
+    for price, size in levels:
         if size <= 0.0:
             side.pop(price, None)
         else:
@@ -241,6 +253,8 @@ def parse_ws_message(
     and continues; a single bad frame must not kill the stream.
     """
     msg = orjson.loads(raw)
+    if not isinstance(msg, dict):
+        raise ValueError("frame is not a JSON object")
     if "success" in msg:  # subscribe/ping acks: {"success": true, "op": ...}
         if msg.get("success") is False:
             return StreamStatus(
@@ -306,7 +320,7 @@ class BybitAdapter(ExchangeAdapter):
             raise RestError(
                 self.name,
                 path,
-                f"venue retCode={payload.get('retCode')} retMsg={payload.get('retMsg')}",
+                f"venue retCode={payload.get('retCode')} retMsg={payload.get('retMsg')!r}",
             )
         if not isinstance(payload.get("result"), dict):
             raise RestError(self.name, path, "result is not an object")
@@ -316,9 +330,11 @@ class BybitAdapter(ExchangeAdapter):
         symbols: list[SymbolInfo] = []
         dropped = 0
         cursor = ""
-        while True:
-            # Spot does not paginate ("limit, cursor are invalid" per docs) —
-            # one call returns everything; the cursor loop is defensive only.
+        # Spot does not paginate ("limit, cursor are invalid" per docs) — one
+        # call returns everything; the cursor loop is defensive only, and the
+        # cursor is venue-controlled, so it is bounded and repeat-checked
+        # rather than trusted (a constant echo must not loop forever).
+        for _page in range(10):
             params = {"category": "spot"}
             if cursor:
                 params["cursor"] = cursor
@@ -340,9 +356,16 @@ class BybitAdapter(ExchangeAdapter):
                     continue
                 if info is not None:
                     symbols.append(info)
-            cursor = str(result.get("nextPageCursor") or "")
-            if not cursor:
+            next_cursor = str(result.get("nextPageCursor") or "")
+            if not next_cursor or next_cursor == cursor:
                 break
+            cursor = next_cursor
+        else:
+            logger.warning(
+                "bybit instruments-info produced a cursor past 10 pages; "
+                "stopping with %d symbols (venue-controlled cursor not trusted)",
+                len(symbols),
+            )
         if dropped:
             logger.warning("bybit: dropped %d malformed symbol entries", dropped)
         return symbols
@@ -398,7 +421,6 @@ class BybitAdapter(ExchangeAdapter):
                     yield StreamStatus(
                         StreamStatus.CONNECTED, self._ws_url, time.perf_counter_ns()
                     )
-                    backoff = _BACKOFF_START_S
                     await self._subscribe(ws, topics)
                     ping_task = asyncio.create_task(self._pinger(ws))
                     while True:
@@ -438,6 +460,9 @@ class BybitAdapter(ExchangeAdapter):
                             logger.error("bybit WS error frame: %s", parsed.detail)
                             yield parsed
                             continue
+                        # Book data flowing = healthy connection; only then
+                        # is it safe to reset the reconnect backoff.
+                        backoff = _BACKOFF_START_S
                         yield parsed
             except asyncio.CancelledError:
                 raise

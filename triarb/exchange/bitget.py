@@ -75,6 +75,7 @@ def parse_symbol(entry: dict[str, Any]) -> SymbolInfo | None:
         quantity_step_size=Decimal(1).scaleb(-int(entry["quantityPrecision"])),
         min_base_amount=Decimal(entry.get("minTradeAmount") or "0"),
         min_notional=Decimal(entry.get("minTradeUSDT") or "0"),
+        min_notional_asset="USDT",  # minTradeUSDT is USDT for every symbol
         status="online",
     )
 
@@ -103,6 +104,8 @@ def parse_ws_message(
     if raw == "pong" or raw == b"pong":
         return None
     msg = orjson.loads(raw)
+    if not isinstance(msg, dict):
+        raise ValueError("frame is not a JSON object")
     event = msg.get("event")
     if event == "error":
         return StreamStatus(
@@ -174,7 +177,7 @@ class BitgetAdapter(ExchangeAdapter):
             raise RestError(self.name, path, f"invalid JSON: {exc}") from exc
         if payload.get("code") != "00000":
             raise RestError(
-                self.name, path, f"venue code={payload.get('code')} msg={payload.get('msg')}"
+                self.name, path, f"venue code={payload.get('code')!r} msg={payload.get('msg')!r}"
             )
         return payload.get("data")
 
@@ -233,7 +236,6 @@ class BitgetAdapter(ExchangeAdapter):
                     yield StreamStatus(
                         StreamStatus.CONNECTED, self._ws_url, time.perf_counter_ns()
                     )
-                    backoff = _BACKOFF_START_S
                     await self._subscribe(ws, symbols, channel)
                     ping_task = asyncio.create_task(self._pinger(ws))
                     while True:
@@ -251,6 +253,10 @@ class BitgetAdapter(ExchangeAdapter):
                             logger.error("bitget WS error frame: %s", parsed.detail)
                             yield parsed
                             continue
+                        # Book data flowing is the evidence of a healthy
+                        # connection; resetting backoff any earlier turns a
+                        # handshake-then-drop maintenance loop into a 1s hammer.
+                        backoff = _BACKOFF_START_S
                         for snapshot in parsed:
                             yield snapshot
             except asyncio.CancelledError:

@@ -136,6 +136,8 @@ def parse_ws_message(
     if raw == "pong" or raw == b"pong":
         return None
     msg = orjson.loads(raw)
+    if not isinstance(msg, dict):
+        raise ValueError("frame is not a JSON object")
     event = msg.get("event")
     if event == "error":
         return StreamStatus(
@@ -205,7 +207,7 @@ class OkxAdapter(ExchangeAdapter):
             raise RestError(self.name, path, f"invalid JSON: {exc}") from exc
         if payload.get("code") != "0":
             raise RestError(
-                self.name, path, f"venue code={payload.get('code')} msg={payload.get('msg')}"
+                self.name, path, f"venue code={payload.get('code')!r} msg={payload.get('msg')!r}"
             )
         return payload.get("data")
 
@@ -265,7 +267,6 @@ class OkxAdapter(ExchangeAdapter):
                     yield StreamStatus(
                         StreamStatus.CONNECTED, self._ws_url, time.perf_counter_ns()
                     )
-                    backoff = _BACKOFF_START_S
                     await self._subscribe(ws, symbols, channel)
                     ping_task = asyncio.create_task(self._pinger(ws))
                     while True:
@@ -289,6 +290,9 @@ class OkxAdapter(ExchangeAdapter):
                             logger.error("okx WS error frame: %s", parsed.detail)
                             yield parsed
                             continue
+                        # Book data flowing = healthy connection; only then
+                        # is it safe to reset the reconnect backoff.
+                        backoff = _BACKOFF_START_S
                         for snapshot in parsed:
                             yield snapshot
             except asyncio.CancelledError:

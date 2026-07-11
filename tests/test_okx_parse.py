@@ -121,6 +121,10 @@ class TestWsParsing:
         with pytest.raises(Exception):
             parse_ws_message(b"not json", 1, 1)
 
+    def test_non_object_json_frame_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="JSON object"):
+            parse_ws_message(b"[1, 2, 3]", 1, 1)
+
 
 class TestChannelValidation:
     def test_auto_resolves_to_books5(self) -> None:
