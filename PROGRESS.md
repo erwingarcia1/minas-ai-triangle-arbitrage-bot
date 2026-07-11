@@ -63,13 +63,27 @@ follow-ups):
   schema row, stale counts, "paper is the default forever" wording) — all
   applied in `51b411f`.
 
-**Tests run:** `pytest` (175 passed, all offline), `ruff check .`,
-`mypy triarb` (strict) — green at every commit.
+**Tests run:** `pytest` (220 passed, all offline, incl. property-based and
+fake-transport stream suites), `ruff check .`, `mypy triarb` (strict) —
+green at every commit. End-to-end offline simulation (scripted synthetic
+market through the real pipeline) passes all six ground-truth scenarios;
+hot-path mean ~39 µs/update on this hardware.
 
 **Review findings:** docs consistency review F1–F11 → fixed (`51b411f`).
 Independent 5-lens code review (quant / market-data / security /
-adversarial / QA with adversarial verification of P0/P1 findings) —
-results recorded below when the fleet completes.
+adversarial / QA, 12 agents incl. adversarial verification of P0/P1
+findings) surfaced 17 findings; all applied (`3597023`, `d505d05`):
+Bybit assembler atomicity (P1), nested-frame AttributeError process-kill
+(P1, verifier-confirmed), min-notional denomination + order-notional
+semantics (P2×2), exact step floor/ceil beyond Decimal context precision
+(P3), Bybit gap-resubscribe dedup and failed-ack reconnect (P3×2),
+data-flow-gated backoff reset (P3), bounded venue-controlled pagination +
+repr-escaped venue strings (P3×2), channel-cadence startup gate (P3), and
+five QA coverage P1s (stream-level fail-safe, USDT-volume derivation,
+snapshot-replace, CLI gate wiring, credential-test strengthening). The
+adversarial reviewer additionally verified that attacks on stale-book
+pricing, float-authoritative money, corrupt-sequence books, and
+untradeable-symbol admission all fail against this code.
 
 **Assumptions:** recorded in `docs/DECISIONS.md` D-001…D-005 and the TBD
 registers in `docs/FEATURE_MATRIX.md` / per-doc TBD tables.
